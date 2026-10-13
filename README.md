@@ -11,7 +11,7 @@ Built with Rust and Tauri — small, native and quick to start.
 
 ![Status: beta](https://img.shields.io/badge/status-beta-orange)
 ![License: MIT](https://img.shields.io/badge/license-MIT-blue)
-![Platforms](https://img.shields.io/badge/platforms-Windows%20%7C%20macOS-lightgrey)
+![Platforms](https://img.shields.io/badge/platforms-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey)
 
 </div>
 
@@ -58,12 +58,13 @@ Get the installer from the [latest release](https://github.com/MadnessCODE/dbcli
 
 - **Windows 10 / 11:** `x64-setup.exe` for most PCs, `arm64-setup.exe` for Windows on ARM. Installs for the current user, no admin rights needed.
 - **macOS 11+:** `universal.dmg` runs on Apple Silicon and Intel Macs.
+- **Linux (x64 / ARM64):** `.AppImage` runs on most distributions and updates itself (`chmod +x`, then run it); `.deb` for Ubuntu / Debian, `.rpm` for Fedora / openSUSE.
 
 The installers aren't code-signed yet:
 - **Windows:** if SmartScreen shows a warning, click **More info** → **Run anyway**.
 - **macOS:** the first launch is blocked; go to **System Settings → Privacy & Security** and click **Open Anyway**.
 
-Linux builds are coming; until then, build from source (below).
+On other platforms, build from source (below).
 
 ## Build from source
 

@@ -1,0 +1,9 @@
+{
+  "bundle": {
+    "targets": ["deb", "rpm", "appimage"],
+    "linux": {
+      "deb": { "section": "database" },
+      "rpm": { "release": "1" }
+    }
+  }
+}

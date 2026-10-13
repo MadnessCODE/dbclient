@@ -322,6 +322,10 @@ h2 { font-size: clamp(30px, 4.4vw, 50px); line-height: 1.1; letter-spacing: -0.0
 .dl-buttons { display: flex; justify-content: center; flex-wrap: wrap; gap: 12px; margin-top: 30px; }
 .dl-buttons .rec { position: relative; }
 .dl-buttons .rec::after { content: "Recommended"; position: absolute; top: -10px; right: -8px; font-size: 10px; font-weight: 700; background: var(--ok); color: #052e12; padding: 1px 7px; border-radius: 99px; }
+.linux-pkgs { display: flex; flex-wrap: wrap; justify-content: center; gap: 6px 14px; margin-top: 12px; font-size: 13px; color: var(--muted); }
+.linux-pkgs a { color: #93b4f8; text-decoration: none; cursor: pointer; }
+.linux-pkgs a:hover { text-decoration: underline; }
+.note code { font: 12.5px var(--mono); color: var(--text-2); }
 .dl-meta { margin: 16px 0 0; font-size: 13.5px; color: var(--muted); }
 .note { max-width: 520px; margin: 14px auto 0; font-size: 13.5px; color: var(--muted); }
 .note a, .dl-meta a { color: #93b4f8; }

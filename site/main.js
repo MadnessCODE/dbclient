@@ -338,11 +338,21 @@ async function isArm() {
   }
 }
 
-const mac = /Mac/i.test(navigator.userAgentData?.platform || navigator.platform || navigator.userAgent);
+const platform = navigator.userAgentData?.platform || navigator.platform || navigator.userAgent;
+const mac = /Mac/i.test(platform);
+const linux = !mac && /Linux/i.test(platform) && !/Android/i.test(navigator.userAgent);
+const linuxArm = linux && /aarch64|arm/i.test(navigator.platform + navigator.userAgent);
+const RELEASES = `https://github.com/${REPO}/releases/latest`;
+$$("#linux-pkgs a").forEach((a) => (a.href = RELEASES));
 
 (async () => {
-  const arm = !mac && (await isArm());
-  if (mac) {
+  const arm = !mac && !linux && (await isArm());
+  if (linux) {
+    $("#dl-linux").classList.replace("secondary", "primary");
+    $("#dl-x64").classList.replace("primary", "secondary");
+    $("#dl-linux").classList.add("rec");
+    $(".download-main .label").textContent = "Download for Linux";
+  } else if (mac) {
     $("#dl-mac").classList.replace("secondary", "primary");
     $("#dl-x64").classList.replace("primary", "secondary");
     $("#dl-mac").classList.add("rec");
@@ -361,10 +371,21 @@ const mac = /Mac/i.test(navigator.userAgentData?.platform || navigator.platform 
     const x64 = asset(/_x64-setup\.exe$/);
     const a64 = asset(/_arm64-setup\.exe$/);
     const dmg = asset(/\.dmg$/);
+    const pkgs = {
+      "appimage-x64": asset(/_amd64\.AppImage$/),
+      "deb-x64": asset(/_amd64\.deb$/),
+      "rpm-x64": asset(/\.x86_64\.rpm$/),
+      "appimage-arm": asset(/_aarch64\.AppImage$/),
+      "deb-arm": asset(/_arm64\.deb$/),
+      "rpm-arm": asset(/\.aarch64\.rpm$/),
+    };
+    $$("#linux-pkgs a").forEach((a) => pkgs[a.dataset.pkg] && (a.href = pkgs[a.dataset.pkg]));
+    const appImage = linuxArm ? pkgs["appimage-arm"] : pkgs["appimage-x64"];
     if (x64) $("#dl-x64").href = x64;
     if (a64) $("#dl-arm").href = a64;
     if (dmg) $("#dl-mac").href = dmg;
-    const main = mac ? dmg : arm ? a64 : x64;
+    if (appImage) $("#dl-linux").href = appImage;
+    const main = linux ? appImage : mac ? dmg : arm ? a64 : x64;
     if (main) $(".download-main").href = main;
     $$(".version").forEach((v) => (v.textContent = `${rel.tag_name} beta`));
   } catch {
