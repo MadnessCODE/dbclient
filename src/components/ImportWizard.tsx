@@ -6,10 +6,11 @@ import { api, errorText, kindLabel, type DumpInfo } from "../lib/api";
 import { isProduction } from "../lib/connStyle";
 import { useStore } from "../store";
 import { formatBytes } from "./LeftPanel";
-import { DEFAULT_WORKERS, Feature, input, Section, Steps, Toggle, WorkerSlider } from "./importParts";
+import { DatabasePicker, DEFAULT_WORKERS, Feature, input, Section, Steps, targetReady, Toggle, WorkerSlider } from "./importParts";
 import { startImport } from "../lib/importJobs";
 import { Button, cx, DbIcon, EnvBadge, Modal } from "./ui";
 import { FORMAT_INFO, TABLE_STEPS, TableImport, tableFormatOf, type TableFile } from "./TableImport";
+import { baseId, dbOf, isMultiDb } from "../lib/connIds";
 
 const STEPS = ["File", "Target & options", "Import"];
 const DIALECT_LABEL = { mysql: "MySQL / MariaDB dump", postgres: "PostgreSQL dump" } as const;
@@ -37,9 +38,9 @@ function Wizard({ initialConn, initialDb, onClose }: { initialConn: string | nul
   const [tableFile, setTableFile] = useState<TableFile | null>(null);
   const [connId, setConnId] = useState<string | null>(() => {
     const pref = initialConn ?? selected;
-    return connected.find((c) => c.id === pref)?.id ?? connected[0]?.id ?? null;
+    return connected.some((c) => c.id === baseId(pref)) ? pref : (connected[0]?.id ?? null);
   });
-  const cfg = connections.find((c) => c.id === connId) ?? null;
+  const cfg = connections.find((c) => c.id === baseId(connId)) ?? null;
   const mysql = cfg?.kind === "mysql";
   const databases = useMemo(() => (connState[connId ?? ""]?.schema?.schemas ?? []).filter((s) => !s.system).map((s) => s.name), [connState, connId]);
   const [database, setDatabase] = useState<string>(() => initialDb ?? "");
@@ -114,14 +115,14 @@ function Wizard({ initialConn, initialDb, onClose }: { initialConn: string | nul
       stripDefiner: mysql && stripDefiner,
     };
     void startImport(
-      { kind: "dump", title: file.name, target: `${cfg.name}${mysql && database ? ` / ${database}` : ""}`, connId, workers, fileSize: file.size },
+      { kind: "dump", title: file.name, target: `${cfg.name}${mysql && database ? ` / ${database}` : dbOf(connId) ? ` / ${dbOf(connId)}` : ""}`, connId, workers, fileSize: file.size },
       (jobId) => api.importDump(connId, jobId, options),
     );
     onClose();
   };
 
   const prod = isProduction(cfg);
-  const canStart = !!file && !!cfg && (!mysql || database.trim() !== "") && (!prod || prodOk);
+  const canStart = !!file && targetReady(cfg, connId) && (!mysql || database.trim() !== "") && (!prod || prodOk);
 
   if (tableFile && step > 0) {
     return <TableImport file={tableFile} initialConn={initialConn ?? connId} initialDb={initialDb} onBack={() => setStep(0)} onClose={onClose} />;
@@ -235,7 +236,7 @@ function Wizard({ initialConn, initialDb, onClose }: { initialConn: string | nul
                         }}
                         className={cx(
                           "flex items-center gap-2.5 rounded-lg border px-3 py-2 text-left",
-                          c.id === connId ? "border-accent bg-accent-soft" : "border-line-strong bg-panel-2 hover:bg-hover",
+                          c.id === baseId(connId) ? "border-accent bg-accent-soft" : "border-line-strong bg-panel-2 hover:bg-hover",
                         )}
                       >
                         <DbIcon kind={c.kind} size={18} />
@@ -274,7 +275,8 @@ function Wizard({ initialConn, initialDb, onClose }: { initialConn: string | nul
                   <p className="text-[11.5px] leading-snug text-muted">If the dump has its own USE / CREATE DATABASE statements, those are followed.</p>
                 </Section>
               )}
-              {cfg && !mysql && (
+              {cfg && isMultiDb(cfg) && <DatabasePicker cfg={cfg} connId={connId} onChange={setConnId} />}
+              {cfg && !mysql && !isMultiDb(cfg) && (
                 <Section title="Database">
                   <p className="text-[13px] text-fg-2">
                     <b className="font-medium text-fg">{connState[cfg.id]?.info?.database || cfg.database}</b>

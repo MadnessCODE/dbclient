@@ -49,6 +49,12 @@ export interface ConnectionInput extends ConnectionConfig {
   sshSecret: string | null;
 }
 
+export interface DatabaseInfo {
+  name: string;
+  /** null without the CONNECT privilege */
+  size: number | null;
+}
+
 export interface ServerInfo {
   database: string;
   user: string;
@@ -188,6 +194,8 @@ export const api = {
   listKnownHosts: () => invoke<[string, string][]>("list_known_hosts"),
   forgetKnownHost: (host: string) => invoke<void>("forget_known_host", { host }),
   disconnect: (id: string) => invoke<void>("disconnect", { id }),
+  listDatabases: (id: string) => invoke<DatabaseInfo[]>("list_databases", { id }),
+  openDatabase: (id: string, database: string) => invoke<ServerInfo>("open_database", { id, database }),
   getSchema: (id: string) => invoke<SchemaTree>("get_schema", { id }),
   getTableStructure: (id: string, schema: string, table: string) =>
     invoke<TableStructure>("get_table_structure", { id, schema, table }),

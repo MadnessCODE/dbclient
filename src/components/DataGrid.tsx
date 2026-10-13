@@ -32,6 +32,7 @@ import { useStore, type MenuEntry } from "../store";
 import { CellEditor } from "./CellEditor";
 import { BulkSetDialog, ValueModal } from "./ValueModal";
 import { Button, cx, IconButton, Modal, Spinner, MOD } from "./ui";
+import { baseId } from "../lib/connIds";
 
 const ROW_H = 32;
 const GUTTER_W = 22;
@@ -84,7 +85,7 @@ const cellId = (r: number, c: number) => `${r}:${c}`;
 export function DataGrid({ rs, connId, kind, tabId }: { rs: ResultSet; connId: string | null; kind: DbKind; tabId: string }) {
   const pageSize = useStore((s) => s.settings.pageSize);
   const setSettings = useStore((s) => s.setSettings);
-  const cfg = useStore((s) => s.connections.find((c) => c.id === connId));
+  const cfg = useStore((s) => s.connections.find((c) => c.id === baseId(connId)));
   const [page, setPage] = useState(0);
   const [sort, setSort] = useState<SortKey[]>([]);
   const [pending, setPending] = useState<PendingEdits>(emptyPending);

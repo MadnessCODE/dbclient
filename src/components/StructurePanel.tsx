@@ -36,6 +36,7 @@ import {
 import { useStore, type EditorTab, type TableRef } from "../store";
 import { isProduction } from "../lib/connStyle";
 import { Button, cx, IconButton, Modal, Spinner, MOD } from "./ui";
+import { baseId } from "../lib/connIds";
 
 type Section = "columns" | "indexes" | "foreignKeys" | "ddl" | "info";
 
@@ -57,7 +58,7 @@ export function resolveTable(tab: EditorTab, schema: SchemaTree | undefined, def
 }
 
 export function StructurePanel({ tab }: { tab: EditorTab }) {
-  const cfg = useStore((s) => s.connections.find((c) => c.id === tab.connId));
+  const cfg = useStore((s) => s.connections.find((c) => c.id === baseId(tab.connId)));
   const connState = useStore((s) => (tab.connId ? s.conn[tab.connId] : undefined));
   const target = resolveTable(tab, connState?.schema, connState?.info?.database);
 
@@ -871,7 +872,7 @@ function PreviewDialog({ connId, statements, onClose, onDone }: { connId: string
   return (
     <Modal title="Save changes" onClose={onClose} width={720}>
       <div className="space-y-3 px-5 py-4">
-{isProduction(useStore.getState().connections.find((c) => c.id === connId)) && (
+{isProduction(useStore.getState().connections.find((c) => c.id === baseId(connId))) && (
           <p className="flex items-center gap-2 rounded-md bg-err/15 px-3 py-2 text-[13px] font-medium text-err">
             <TriangleAlert size={15} /> This runs on a PRODUCTION database.
           </p>

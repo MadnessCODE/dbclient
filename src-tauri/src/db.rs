@@ -49,9 +49,8 @@ impl DbPool {
                 if let Some(pw) = password {
                     opts = opts.password(pw);
                 }
-                if !cfg.database.is_empty() {
-                    opts = opts.database(&cfg.database);
-                }
+                // without a database Postgres would pick one named after the user, which rarely exists
+                opts = opts.database(if cfg.database.is_empty() { "postgres" } else { &cfg.database });
                 let pool = PgPoolOptions::new()
                     .max_connections(5)
                     .acquire_timeout(timeout)

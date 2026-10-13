@@ -28,17 +28,32 @@ use ssh::{KnownHosts, SshTunnel};
 use store::{saved_password, saved_ssh_secret, ConnectionConfig, ConnectionInput, ConnectionStore};
 
 /// An open connection: the pool and, over SSH, the tunnel that must outlive it.
+/// PostgreSQL connections without a default database also keep a pool per opened database.
 struct Live {
     pool: DbPool,
     tunnel: Option<SshTunnel>,
+    cfg: ConnectionConfig,
+    password: Option<String>,
+    databases: HashMap<String, DbPool>,
 }
 
 impl Live {
     async fn close(self) {
+        for p in self.databases.values() {
+            p.close().await;
+        }
         self.pool.close().await;
         if let Some(t) = self.tunnel {
             t.close().await;
         }
+    }
+}
+
+/// Another database on the same server is addressed as "<connection id>::<database>".
+fn split_db(id: &str) -> (&str, Option<&str>) {
+    match id.split_once("::") {
+        Some((base, db)) => (base, Some(db)),
+        None => (id, None),
     }
 }
 
@@ -47,7 +62,13 @@ struct Pools(Mutex<HashMap<String, Live>>);
 
 impl Pools {
     fn get(&self, id: &str) -> AppResult<DbPool> {
-        self.0.lock().unwrap().get(id).map(|l| l.pool.clone()).ok_or_else(|| msg("Not connected"))
+        let (base, db) = split_db(id);
+        let lives = self.0.lock().unwrap();
+        let live = lives.get(base).ok_or_else(|| msg("Not connected"))?;
+        match db {
+            None => Ok(live.pool.clone()),
+            Some(db) => live.databases.get(db).cloned().ok_or_else(|| msg("Not connected")),
+        }
     }
 }
 
@@ -62,7 +83,7 @@ async fn open_live(cfg: &ConnectionConfig, password: Option<&str>, ssh_secret: O
         // A broken SSH channel explains more than "connection reset"
         Err(e) => return Err(tunnel.as_ref().and_then(|t| t.last_error()).map(msg).unwrap_or(e)),
     };
-    Ok(Live { pool, tunnel })
+    Ok(Live { pool, tunnel, cfg: cfg.clone(), password: password.map(str::to_owned), databases: HashMap::new() })
 }
 
 #[tauri::command]
@@ -167,11 +188,75 @@ async fn connect(
 
 #[tauri::command]
 async fn disconnect(pools: State<'_, Pools>, id: String) -> AppResult<()> {
+    let (base, db) = split_db(&id);
+    if let Some(db) = db {
+        let pool = pools.0.lock().unwrap().get_mut(base).and_then(|l| l.databases.remove(db));
+        if let Some(pool) = pool {
+            pool.close().await;
+        }
+        return Ok(());
+    }
     let live = pools.0.lock().unwrap().remove(&id);
     if let Some(live) = live {
         live.close().await;
     }
     Ok(())
+}
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct DatabaseInfo {
+    name: String,
+    /// None without the CONNECT privilege
+    size: Option<i64>,
+}
+
+/// PostgreSQL databases on the server that accept connections.
+#[tauri::command]
+async fn list_databases(pools: State<'_, Pools>, id: String) -> AppResult<Vec<DatabaseInfo>> {
+    let pool = pools.get(&id)?;
+    let rows = pool
+        .text_rows(
+            "select datname, case when has_database_privilege(datname, 'CONNECT') then pg_database_size(oid) end              from pg_database where datallowconn and not datistemplate order by datname",
+        )
+        .await?;
+    Ok(rows
+        .into_iter()
+        .filter_map(|r| Some(DatabaseInfo { name: r.first()?.clone()?, size: r.get(1).cloned().flatten().and_then(|s| s.parse().ok()) }))
+        .collect())
+}
+
+/// Opens another database on an already connected PostgreSQL server (same credentials and tunnel).
+#[tauri::command]
+async fn open_database(pools: State<'_, Pools>, id: String, database: String) -> AppResult<ServerInfo> {
+    let sub = format!("{id}::{database}");
+    if let Ok(pool) = pools.get(&sub) {
+        let cfg = pools.0.lock().unwrap().get(&id).map(|l| l.cfg.clone()).ok_or_else(|| msg("Not connected"))?;
+        return db::server_info(&pool, &cfg).await;
+    }
+    let (mut cfg, password, port) = {
+        let lives = pools.0.lock().unwrap();
+        let live = lives.get(&id).ok_or_else(|| msg("Not connected"))?;
+        (live.cfg.clone(), live.password.clone(), live.tunnel.as_ref().map(|t| t.local_port))
+    };
+    cfg.database = database.clone();
+    let pool = DbPool::connect(&cfg, password.as_deref(), port).await?;
+    let info = db::server_info(&pool, &cfg).await?;
+    let extra = {
+        let mut lives = pools.0.lock().unwrap();
+        match lives.get_mut(&id) {
+            Some(live) if !live.databases.contains_key(&database) => {
+                live.databases.insert(database, pool);
+                None
+            }
+            // disconnected meanwhile, or opened twice
+            _ => Some(pool),
+        }
+    };
+    if let Some(p) = extra {
+        p.close().await;
+    }
+    Ok(info)
 }
 
 /// Known SSH hosts (host:port -> SHA256 key fingerprint).
@@ -329,6 +414,8 @@ pub fn run() {
             test_connection,
             connect,
             disconnect,
+            list_databases,
+            open_database,
             list_known_hosts,
             forget_known_host,
             get_schema,

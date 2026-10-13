@@ -5,6 +5,7 @@ import { api, errorText } from "../lib/api";
 import { useStore, type MenuEntry } from "../store";
 import { isProduction } from "../lib/connStyle";
 import { Button, cx, Modal, Spinner } from "./ui";
+import { baseId } from "../lib/connIds";
 
 export function ContextMenuHost() {
   const menu = useStore((s) => s.contextMenu);
@@ -141,6 +142,7 @@ function ActionDialogView() {
     setRunning(true);
     setError(null);
     try {
+      await dlg.beforeRun?.();
       await api.runQuery(dlg.connId, crypto.randomUUID(), sql, 10);
       close();
       dlg.afterRun?.();
@@ -160,7 +162,7 @@ function ActionDialogView() {
           void run();
         }}
       >
-{isProduction(useStore.getState().connections.find((c) => c.id === dlg.connId)) && (
+{isProduction(useStore.getState().connections.find((c) => c.id === baseId(dlg.connId))) && (
           <p className="flex items-center gap-2 rounded-md bg-err/15 px-3 py-2 text-[13px] font-medium text-err">
             <TriangleAlert size={15} /> This runs on a PRODUCTION database.
           </p>

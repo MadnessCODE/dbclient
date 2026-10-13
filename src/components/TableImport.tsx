@@ -17,9 +17,10 @@ import { isProduction } from "../lib/connStyle";
 import { quoteIdent } from "../lib/sql";
 import { useStore } from "../store";
 import { formatBytes } from "./LeftPanel";
-import { DEFAULT_WORKERS, input, Section, Steps, Toggle, WorkerSlider } from "./importParts";
+import { DatabasePicker, DEFAULT_WORKERS, input, Section, Steps, targetReady, Toggle, WorkerSlider } from "./importParts";
 import { startImport } from "../lib/importJobs";
 import { Button, cx, DbIcon, EnvBadge, Modal, Spinner } from "./ui";
+import { baseId, dbOf, isMultiDb } from "../lib/connIds";
 
 export interface TableFile {
   path: string;
@@ -144,9 +145,9 @@ export function TableImport({
   // target
   const [connId, setConnId] = useState<string | null>(() => {
     const pref = initialConn ?? selected;
-    return connected.find((c) => c.id === pref)?.id ?? connected[0]?.id ?? null;
+    return connected.some((c) => c.id === baseId(pref)) ? pref : (connected[0]?.id ?? null);
   });
-  const cfg = connections.find((c) => c.id === connId) ?? null;
+  const cfg = connections.find((c) => c.id === baseId(connId)) ?? null;
   const kind: DbKind = cfg?.kind ?? "postgres";
   const mysql = kind === "mysql";
   const schemas = useMemo(() => (connState[connId ?? ""]?.schema?.schemas ?? []).filter((s) => !s.system), [connState, connId]);
@@ -254,14 +255,14 @@ export function TableImport({
         database: mysql ? schema || null : null,
     };
     void startImport(
-      { kind: "table", title: file.name, target: `${cfg.name} / ${schema}.${table}`, connId, workers, fileSize: file.size },
+      { kind: "table", title: file.name, target: `${cfg.name} / ${dbOf(connId) ? `${dbOf(connId)}.` : ""}${schema}.${table}`, connId, workers, fileSize: file.size },
       (jobId) => api.importTableFile(connId, jobId, options),
     );
     onClose();
   };
 
   const prod = isProduction(cfg);
-  const targetOk = !!cfg && !!schema && (mode === "new" ? !!newName.trim() && !nameTaken : !!existing && !!structure);
+  const targetOk = targetReady(cfg, connId) && !!schema && (mode === "new" ? !!newName.trim() && !nameTaken : !!existing && !!structure);
   const canGo = (i: number) => {
     if (i <= 1) return true;
     if (i === 2) return !!preview && !previewError;
@@ -297,7 +298,7 @@ export function TableImport({
                         }}
                         className={cx(
                           "flex items-center gap-2.5 rounded-lg border px-3 py-2 text-left",
-                          c.id === connId ? "border-accent bg-accent-soft" : "border-line-strong bg-panel-2 hover:bg-hover",
+                          c.id === baseId(connId) ? "border-accent bg-accent-soft" : "border-line-strong bg-panel-2 hover:bg-hover",
                         )}
                       >
                         <DbIcon kind={c.kind} size={18} />
@@ -311,6 +312,16 @@ export function TableImport({
                   </div>
                 )}
               </Section>
+              {cfg && isMultiDb(cfg) && (
+                <DatabasePicker
+                  cfg={cfg}
+                  connId={connId}
+                  onChange={(id) => {
+                    setConnId(id);
+                    setExisting("");
+                  }}
+                />
+              )}
               {cfg && (
                 <Section title={mysql ? "Database" : "Schema"}>
                   <select

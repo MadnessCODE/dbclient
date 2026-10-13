@@ -9,6 +9,7 @@ import {
   api,
   errorText,
   type ConnectionConfig,
+  type DatabaseInfo,
   type Project,
   type QueryOutput,
   type DbKind,
@@ -16,6 +17,7 @@ import {
   type SchemaTree,
   type ServerInfo,
 } from "./lib/api";
+import { baseId, dbOf, isMultiDb } from "./lib/connIds";
 
 export type ConnStatus = "idle" | "connecting" | "connected" | "error";
 
@@ -25,6 +27,8 @@ export interface ConnState {
   schema?: SchemaTree;
   schemaLoading?: boolean;
   error?: string;
+  /** PostgreSQL without a default database: databases on the server */
+  databases?: DatabaseInfo[];
 }
 
 export interface EditorTab {
@@ -137,6 +141,8 @@ export interface ActionDialog {
   requireInput?: string;
   /** SQL from the typed name */
   buildSql: (input: string) => string;
+  /** e.g. close our own connections to a database before dropping it */
+  beforeRun?: () => Promise<void>;
   afterRun?: () => void;
 }
 
@@ -204,6 +210,7 @@ interface State {
   connectTo: (id: string, secrets?: Secrets) => Promise<boolean>;
   disconnectFrom: (id: string) => Promise<void>;
   refreshSchema: (id: string) => Promise<void>;
+  loadDatabases: (id: string) => Promise<void>;
   removeConnection: (id: string) => Promise<void>;
   upsertConnection: (cfg: ConnectionConfig) => void;
   submitPassword: (secrets: Secrets | null) => void;
@@ -322,8 +329,23 @@ export const useStore = create<State>()(
         selectConnection: (id) => set({ selectedConnId: id }),
 
         connectTo: async (id, secrets) => {
-          const cfg = get().connections.find((c) => c.id === id);
+          const cfg = get().connections.find((c) => c.id === baseId(id));
           if (!cfg) return false;
+          const db = dbOf(id);
+          if (db) {
+            // another database on the same server: reuse the server connection
+            if (get().conn[cfg.id]?.status !== "connected" && !(await get().connectTo(cfg.id, secrets))) return false;
+            setConn(id, { status: "connecting", error: undefined });
+            try {
+              const info = await api.openDatabase(cfg.id, db);
+              setConn(id, { status: "connected", info });
+              void get().refreshSchema(id);
+              return true;
+            } catch (e) {
+              setConn(id, { status: "error", error: errorText(e) });
+              return false;
+            }
+          }
           let sec = secrets;
           if (sec === undefined && !cfg.savePassword) {
             const entered = await askPassword(id);
@@ -335,6 +357,7 @@ export const useStore = create<State>()(
             const info = await api.connect(id, sec?.password, sec?.sshSecret);
             setConn(id, { status: "connected", info });
             void get().refreshSchema(id);
+            if (isMultiDb(cfg)) void get().loadDatabases(id);
             return true;
           } catch (e) {
             const error = errorText(e);
@@ -350,7 +373,17 @@ export const useStore = create<State>()(
 
         disconnectFrom: async (id) => {
           await api.disconnect(id);
-          setConn(id, { status: "idle", schema: undefined, info: get().conn[id]?.info });
+          // closing the server connection closes its databases too
+          const ids = Object.keys(get().conn).filter((k) => k === id || (!dbOf(id) && baseId(k) === id));
+          for (const k of ids) setConn(k, { status: "idle", schema: undefined, info: get().conn[k]?.info });
+        },
+
+        loadDatabases: async (id) => {
+          try {
+            setConn(id, { databases: await api.listDatabases(id) });
+          } catch (e) {
+            setConn(id, { error: errorText(e) });
+          }
         },
 
         refreshSchema: async (id) => {
@@ -372,7 +405,7 @@ export const useStore = create<State>()(
               connections: s.connections.filter((c) => c.id !== id),
               conn,
               selectedConnId: s.selectedConnId === id ? null : s.selectedConnId,
-              tabs: s.tabs.map((t) => (t.connId === id ? { ...t, connId: null } : t)),
+              tabs: s.tabs.map((t) => (baseId(t.connId) === id ? { ...t, connId: null } : t)),
             };
           });
         },
@@ -471,7 +504,7 @@ export const useStore = create<State>()(
           }
 
           // production: confirm statements that change data or structure
-          const cfg = get().connections.find((c) => c.id === connId);
+          const cfg = get().connections.find((c) => c.id === baseId(connId));
           if (isProduction(cfg)) {
             const writes = writeStatements(splitStatements(sql, cfg!.kind).map((st) => st.text));
             if (writes.length > 0) {
@@ -597,4 +630,4 @@ export const useStore = create<State>()(
 export const useActiveTab = () => useStore((s) => s.tabs.find((t) => t.id === s.activeTabId) ?? null);
 
 export const useConnection = (id: string | null | undefined) =>
-  useStore((s) => (id ? s.connections.find((c) => c.id === id) : undefined));
+  useStore((s) => (id ? s.connections.find((c) => c.id === baseId(id)) : undefined));

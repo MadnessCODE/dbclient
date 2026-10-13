@@ -4,6 +4,7 @@ import { kindLabel } from "../lib/api";
 import { quoteIdent } from "../lib/sql";
 import { useStore } from "../store";
 import { cx, DbIcon, Modal, MOD } from "./ui";
+import { baseId, dbOf, isMultiDb } from "../lib/connIds";
 import { field } from "./ConnectionDialog";
 
 export { ConnectionDialog, PasswordDialog } from "./ConnectionDialog";
@@ -33,34 +34,40 @@ function Palette() {
   const all = useMemo(() => {
     const items: PaletteItem[] = [];
     for (const c of st.connections) {
-      const schema = st.conn[c.id]?.schema;
-      for (const s of schema?.schemas ?? []) {
-        if (s.system) continue;
-        for (const t of [...s.tables, ...s.views, ...s.matViews]) {
-          const isView = !s.tables.includes(t);
-          items.push({
-            key: `t:${c.id}:${s.name}.${t}`,
-            icon: isView ? <Eye size={15} className="text-muted" /> : <Sheet size={15} className="text-muted" />,
-            label: `${s.name}.${t}`,
-            detail: c.name,
-            run: () => st.newTab({ sql: `SELECT *\nFROM ${quoteIdent(s.name, c.kind)}.${quoteIdent(t, c.kind)}\nLIMIT 100;`, connId: c.id, title: `${t}.sql`, run: true, table: { schema: s.name, table: t } }),
-          });
-        }
-        for (const col of schema!.columns.filter((x) => x.schema === s.name)) {
-          if (!q) continue; // columns only while typing
-          items.push({
-            key: `c:${c.id}:${s.name}.${col.table}.${col.name}`,
-            icon: <span className="w-[15px] text-center text-[11px] text-muted">#</span>,
-            label: `${col.table}.${col.name}`,
-            detail: `${col.dataType} · ${c.name}`,
-            run: () =>
-              st.newTab({
-                sql: `SELECT ${quoteIdent(col.name, c.kind)}, count(*)\nFROM ${quoteIdent(s.name, c.kind)}.${quoteIdent(col.table, c.kind)}\nGROUP BY 1\nORDER BY 2 DESC\nLIMIT 100;`,
-                connId: c.id,
-                title: `${col.table}.sql`,
-                run: true,
-              }),
-          });
+      // a server listing all its databases: search the opened ones
+      const targets = isMultiDb(c)
+        ? Object.keys(st.conn).filter((k) => baseId(k) === c.id && dbOf(k)).map((k) => [k, `${c.name} / ${dbOf(k)}`])
+        : [[c.id, c.name]];
+      for (const [id, name] of targets) {
+        const schema = st.conn[id]?.schema;
+        for (const s of schema?.schemas ?? []) {
+          if (s.system) continue;
+          for (const t of [...s.tables, ...s.views, ...s.matViews]) {
+            const isView = !s.tables.includes(t);
+            items.push({
+              key: `t:${id}:${s.name}.${t}`,
+              icon: isView ? <Eye size={15} className="text-muted" /> : <Sheet size={15} className="text-muted" />,
+              label: `${s.name}.${t}`,
+              detail: name,
+              run: () => st.newTab({ sql: `SELECT *\nFROM ${quoteIdent(s.name, c.kind)}.${quoteIdent(t, c.kind)}\nLIMIT 100;`, connId: id, title: `${t}.sql`, run: true, table: { schema: s.name, table: t } }),
+            });
+          }
+          for (const col of schema!.columns.filter((x) => x.schema === s.name)) {
+            if (!q) continue; // columns only while typing
+            items.push({
+              key: `c:${id}:${s.name}.${col.table}.${col.name}`,
+              icon: <span className="w-[15px] text-center text-[11px] text-muted">#</span>,
+              label: `${col.table}.${col.name}`,
+              detail: `${col.dataType} · ${name}`,
+              run: () =>
+                st.newTab({
+                  sql: `SELECT ${quoteIdent(col.name, c.kind)}, count(*)\nFROM ${quoteIdent(s.name, c.kind)}.${quoteIdent(col.table, c.kind)}\nGROUP BY 1\nORDER BY 2 DESC\nLIMIT 100;`,
+                  connId: id,
+                  title: `${col.table}.sql`,
+                  run: true,
+                }),
+            });
+          }
         }
       }
       items.push({

@@ -6,6 +6,7 @@ import { api, defaultPort, errorText, kindLabel, type ConnectionConfig, type DbK
 import { CONN_COLORS, ENVIRONMENTS } from "../lib/connStyle";
 import { useStore } from "../store";
 import { Button, cx, DbIcon, IconButton, Modal, Spinner } from "./ui";
+import { baseId } from "../lib/connIds";
 
 export const field =
   "h-9 w-full rounded-md border border-line-strong bg-bg/40 px-3 text-[13px] text-fg outline-none focus:border-accent disabled:opacity-50";
@@ -407,7 +408,7 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
 
 export function PasswordDialog() {
   const prompt = useStore((s) => s.passwordPrompt);
-  const cfg = useStore((s) => s.connections.find((c) => c.id === prompt?.connId));
+  const cfg = useStore((s) => s.connections.find((c) => c.id === baseId(prompt?.connId)));
   const [pw, setPw] = useState("");
   const [sshPw, setSshPw] = useState("");
   useEffect(() => {

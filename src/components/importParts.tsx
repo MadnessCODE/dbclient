@@ -1,6 +1,8 @@
 // Shared import wizard parts (dump and table import): steps, progress, workers.
 import { Check, CircleAlert, CircleCheck, Info, Lightbulb, OctagonX, Square } from "lucide-react";
-import type { ImportProgress, ImportSummary, WorkerView } from "../lib/api";
+import type { ConnectionConfig, ImportProgress, ImportSummary, WorkerView } from "../lib/api";
+import { dbOf, isMultiDb, subId } from "../lib/connIds";
+import { useStore } from "../store";
 import { formatBytes } from "./LeftPanel";
 import { cx, Spinner } from "./ui";
 
@@ -286,6 +288,40 @@ export function Section({ title, children }: { title: string; children: React.Re
     </div>
   );
 }
+
+/** Target database on a PostgreSQL server shown with all its databases. */
+export function DatabasePicker({ cfg, connId, onChange }: { cfg: ConnectionConfig; connId: string | null; onChange: (id: string) => void }) {
+  const databases = useStore((s) => s.conn[cfg.id]?.databases ?? []);
+  const status = useStore((s) => (connId ? s.conn[connId]?.status : undefined));
+  const db = dbOf(connId) ?? "";
+  return (
+    <Section title="Database">
+      <select
+        value={db}
+        onChange={(e) => {
+          const id = subId(cfg.id, e.target.value);
+          onChange(id);
+          if (useStore.getState().conn[id]?.status !== "connected") void useStore.getState().connectTo(id);
+        }}
+        className={input}
+      >
+        {!db && <option value="">Choose a database…</option>}
+        {databases.map((d) => (
+          <option key={d.name}>{d.name}</option>
+        ))}
+      </select>
+      {status === "connecting" && (
+        <span className="flex items-center gap-2 text-[11.5px] text-muted">
+          <Spinner /> Connecting…
+        </span>
+      )}
+    </Section>
+  );
+}
+
+/** The chosen target is open and, for a multi-database server, a database is picked. */
+export const targetReady = (cfg: ConnectionConfig | null, connId: string | null) =>
+  !!cfg && !!connId && (!isMultiDb(cfg) || !!dbOf(connId)) && useStore.getState().conn[connId]?.status === "connected";
 
 export function Feature({ icon, title, text }: { icon: React.ReactNode; title: string; text: string }) {
   return (

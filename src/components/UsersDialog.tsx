@@ -37,6 +37,7 @@ import {
 } from "../lib/users";
 import { useStore } from "../store";
 import { Button, cx, EnvBadge, Modal, Spinner } from "./ui";
+import { baseId } from "../lib/connIds";
 
 const input = "h-8 w-full rounded-md border border-line-strong bg-bg/50 px-2.5 text-[13px] text-fg outline-none focus:border-accent";
 const clone = <T,>(x: T): T => JSON.parse(JSON.stringify(x));
@@ -86,7 +87,7 @@ function newDraft(kind: DbKind): Draft {
 }
 
 function UsersDialog({ connId, initialUser, initialDrop, onClose }: { connId: string; initialUser?: string; initialDrop?: boolean; onClose: () => void }) {
-  const cfg = useStore((s) => s.connections.find((c) => c.id === connId));
+  const cfg = useStore((s) => s.connections.find((c) => c.id === baseId(connId)));
   const conn = useStore((s) => s.conn[connId]);
   const kind: DbKind = cfg?.kind ?? "postgres";
   const mysql = kind === "mysql";

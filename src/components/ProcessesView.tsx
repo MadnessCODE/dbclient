@@ -7,6 +7,7 @@ import { fmtDuration, isActive, isIdle, listProcesses, stopProcess, type Proc } 
 import { useStore } from "../store";
 import { Button, cx, DbIcon, EnvBadge, Modal, Spinner, StatusDot } from "./ui";
 import { Menu } from "./EditorArea";
+import { baseId } from "../lib/connIds";
 
 const INTERVALS: [number, string][] = [
   [2000, "2 s"],
@@ -25,7 +26,7 @@ export function ProcessesView() {
   const connected = connections.filter((c) => connState[c.id]?.status === "connected");
 
   const [connId, setConnId] = useState<string | null>(() => connected.find((c) => c.id === selected)?.id ?? connected[0]?.id ?? null);
-  const cfg = connections.find((c) => c.id === connId) ?? null;
+  const cfg = connections.find((c) => c.id === baseId(connId)) ?? null;
   useEffect(() => {
     if (!connId || !connected.some((c) => c.id === connId)) setConnId(connected[0]?.id ?? null);
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -347,7 +348,7 @@ function ConnPicker({ connId, onPick }: { connId: string | null; onPick: (id: st
   const conn = useStore((s) => s.conn);
   const [open, setOpen] = useState(false);
   const [q, setQ] = useState("");
-  const cfg = connections.find((c) => c.id === connId);
+  const cfg = connections.find((c) => c.id === baseId(connId));
   const color = connColor(cfg);
   const match = (c: (typeof connections)[number]) => `${c.name} ${c.host} ${c.database}`.toLowerCase().includes(q.toLowerCase());
   const on = connections.filter((c) => conn[c.id]?.status === "connected" && match(c));

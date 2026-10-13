@@ -1,4 +1,5 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import Editor, { type OnMount } from "@monaco-editor/react";
 import { ask, save } from "@tauri-apps/plugin-dialog";
 import { format as formatSql } from "sql-formatter";
@@ -29,6 +30,7 @@ import { statementAt } from "../lib/sql";
 import { useActiveTab, useStore, type EditorTab, type MenuEntry } from "../store";
 import { Button, cx, DbIcon, EnvBadge, IconButton, Spinner, StatusDot, MOD } from "./ui";
 import { connColor, isProduction, tint } from "../lib/connStyle";
+import { baseId, dbOf, isMultiDb, subId } from "../lib/connIds";
 
 type MonacoEditor = MonacoApi.editor.IStandaloneCodeEditor;
 
@@ -37,14 +39,14 @@ setCompletionContext(() => {
   const s = useStore.getState();
   const tab = s.tabs.find((t) => t.id === s.activeTabId);
   if (!tab?.connId) return {};
-  return { schema: s.conn[tab.connId]?.schema, kind: s.connections.find((c) => c.id === tab.connId)?.kind };
+  return { schema: s.conn[tab.connId]?.schema, kind: s.connections.find((c) => c.id === baseId(tab.connId))?.kind };
 });
 
 export function EditorArea() {
   const tabs = useStore((s) => s.tabs);
   const tab = useActiveTab();
   const editorRef = useRef<MonacoEditor | null>(null);
-  const cfg = useStore((s) => s.connections.find((c) => c.id === tab?.connId));
+  const cfg = useStore((s) => s.connections.find((c) => c.id === baseId(tab?.connId)));
   const color = connColor(cfg);
 
   return (
@@ -114,7 +116,7 @@ function tabMenu(tab: EditorTab, tabs: EditorTab[]): MenuEntry[] {
   const others = tabs.filter((t) => t.id !== tab.id).map((t) => t.id);
   const right = tabs.slice(idx + 1).map((t) => t.id);
   const sameConn = tab.connId ? tabs.filter((t) => t.connId === tab.connId).map((t) => t.id) : [];
-  const connName = st.connections.find((c) => c.id === tab.connId)?.name;
+  const connName = st.connections.find((c) => c.id === baseId(tab.connId))?.name;
   return [
     { label: "Close", icon: <X />, hint: `${MOD}+W`, onClick: () => void closeTabs([tab.id]) },
     { label: "Close others", icon: <CopyX />, disabled: others.length === 0, onClick: () => void closeTabs(others) },
@@ -138,7 +140,7 @@ function TabsBar({ tabs }: { tabs: EditorTab[] }) {
   return (
     <div className="flex h-12 shrink-0 items-end gap-1 overflow-x-auto px-3 pt-2">
       {tabs.map((t) => {
-        const tcfg = connections.find((c) => c.id === t.connId);
+        const tcfg = connections.find((c) => c.id === baseId(t.connId));
         const kind = tcfg?.kind;
         const tcolor = connColor(tcfg);
         const active = t.id === activeTabId;
@@ -190,7 +192,7 @@ function TabsBar({ tabs }: { tabs: EditorTab[] }) {
 
 /** SQL to run: the selection, the statement under the cursor ("statement"), or everything. */
 function sqlToRun(editor: MonacoEditor | null, mode: "selection-or-all" | "statement", tab: EditorTab): string {
-  const kind = useStore.getState().connections.find((c) => c.id === tab.connId)?.kind ?? "postgres";
+  const kind = useStore.getState().connections.find((c) => c.id === baseId(tab.connId))?.kind ?? "postgres";
   const model = editor?.getModel();
   if (!editor || !model) return tab.sql;
   const sel = editor.getSelection();
@@ -231,7 +233,7 @@ async function saveTab(tab: EditorTab, saveAs = false) {
 function formatEditor(editor: MonacoEditor | null, tab: EditorTab) {
   const model = editor?.getModel();
   if (!editor || !model) return;
-  const kind = useStore.getState().connections.find((c) => c.id === tab.connId)?.kind;
+  const kind = useStore.getState().connections.find((c) => c.id === baseId(tab.connId))?.kind;
   const sel = editor.getSelection();
   const range = sel && !sel.isEmpty() ? sel : model.getFullModelRange();
   try {
@@ -320,8 +322,17 @@ function Toolbar({ tab, editorRef }: { tab: EditorTab; editorRef: React.RefObjec
 function ConnectionPicker({ tab }: { tab: EditorTab }) {
   const connections = useStore((s) => s.connections);
   const conn = useStore((s) => s.conn);
-  const cfg = connections.find((c) => c.id === tab.connId);
+  const cfg = connections.find((c) => c.id === baseId(tab.connId));
+  const db = dbOf(tab.connId);
   const [open, setOpen] = useState(false);
+
+  const pick = (id: string) => {
+    const st = useStore.getState();
+    st.updateTab(tab.id, { connId: id });
+    st.selectConnection(baseId(id)!);
+    if (conn[id]?.status !== "connected") void st.connectTo(id);
+    setOpen(false);
+  };
 
   return (
     <div className="relative">
@@ -333,9 +344,9 @@ function ConnectionPicker({ tab }: { tab: EditorTab }) {
         {cfg ? (
           <>
             <DbIcon kind={cfg.kind} size={16} />
-            <StatusDot status={conn[cfg.id]?.status} className="h-2 w-2" />
+            <StatusDot status={conn[tab.connId!]?.status} className="h-2 w-2" />
             <span className="flex-1 truncate">
-              {cfg.name} <span className="text-muted">({kindLabel(cfg.kind)})</span>
+              {cfg.name} <span className="text-muted">{db ? `/ ${db}` : `(${kindLabel(cfg.kind)})`}</span>
             </span>
             <EnvBadge cfg={cfg} />
           </>
@@ -348,21 +359,31 @@ function ConnectionPicker({ tab }: { tab: EditorTab }) {
         <Menu onClose={() => setOpen(false)} width={260}>
           {connections.length === 0 && <div className="px-3 py-2 text-[12px] text-muted">No connections</div>}
           {connections.map((c) => (
-            <button
-              key={c.id}
-              onClick={() => {
-                useStore.getState().updateTab(tab.id, { connId: c.id });
-                useStore.getState().selectConnection(c.id);
-                if (conn[c.id]?.status !== "connected") void useStore.getState().connectTo(c.id);
-                setOpen(false);
-              }}
-              className={cx("flex w-full items-center gap-2 rounded px-2.5 py-1.5 text-left text-[13px] hover:bg-hover", c.id === tab.connId && "bg-accent-soft")}
-            >
-              <DbIcon kind={c.kind} size={15} />
-              <StatusDot status={conn[c.id]?.status} className="h-2 w-2" />
-              <span className="truncate">{c.name}</span>
-              <span className="ml-auto text-[11px] text-muted">{kindLabel(c.kind)}</span>
-            </button>
+            <div key={c.id}>
+              <button
+                onClick={() => pick(c.id)}
+                className={cx("flex w-full items-center gap-2 rounded px-2.5 py-1.5 text-left text-[13px] hover:bg-hover", c.id === tab.connId && "bg-accent-soft")}
+              >
+                <DbIcon kind={c.kind} size={15} />
+                <StatusDot status={conn[c.id]?.status} className="h-2 w-2" />
+                <span className="truncate">{c.name}</span>
+                <span className="ml-auto text-[11px] text-muted">{kindLabel(c.kind)}</span>
+              </button>
+              {isMultiDb(c) &&
+                conn[c.id]?.databases?.map((d) => {
+                  const id = subId(c.id, d.name);
+                  return (
+                    <button
+                      key={id}
+                      onClick={() => pick(id)}
+                      className={cx("flex w-full items-center gap-2 rounded py-1 pr-2.5 pl-8 text-left text-[12.5px] hover:bg-hover", id === tab.connId && "bg-accent-soft")}
+                    >
+                      <StatusDot status={conn[id]?.status} className="h-1.5 w-1.5" />
+                      <span className="truncate">{d.name}</span>
+                    </button>
+                  );
+                })}
+            </div>
           ))}
         </Menu>
       )}
@@ -386,15 +407,31 @@ export function Menu({ children, onClose, right, width = 230 }: { children: Reac
       window.removeEventListener("keydown", onKey);
     };
   }, [onClose]);
+  // Rendered in <body> next to the trigger, so panels with overflow hidden don't clip it.
+  const [pos, setPos] = useState<{ top: number; left: number } | null>(null);
+  const anchor = useCallback(
+    (el: HTMLSpanElement | null) => {
+      const r = el?.parentElement?.getBoundingClientRect();
+      if (r) setPos({ top: r.bottom + 4, left: right ? r.right - width : r.left });
+    },
+    [right, width],
+  );
   return (
-    <div
-      ref={ref}
-      onClick={(e) => (e.target as HTMLElement).closest("button") && onClose()}
-      style={{ width }}
-      className={cx("absolute top-full z-40 mt-1 rounded-lg border border-line-strong bg-raised p-1 shadow-xl", right ? "right-0" : "left-0")}
-    >
-      {children}
-    </div>
+    <>
+      <span ref={anchor} className="hidden" />
+      {pos &&
+        createPortal(
+          <div
+            ref={ref}
+            onClick={(e) => (e.target as HTMLElement).closest("button") && onClose()}
+            style={{ width, top: pos.top, left: pos.left, maxHeight: window.innerHeight - pos.top - 12 }}
+            className="fixed z-[80] overflow-y-auto rounded-lg border border-line-strong bg-raised p-1 shadow-xl"
+          >
+            {children}
+          </div>,
+          document.body,
+        )}
+    </>
   );
 }
 

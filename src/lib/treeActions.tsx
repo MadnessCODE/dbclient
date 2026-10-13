@@ -24,6 +24,7 @@ import { ask } from "@tauri-apps/plugin-dialog";
 import { api, errorText, kindLabel, type ConnectionConfig, type DbKind } from "./api";
 import { quoteIdent } from "./sql";
 import { useStore, type MenuEntry } from "../store";
+import { baseId, dbOf, isMultiDb } from "./connIds";
 
 export type ObjectKind = "table" | "view" | "matview" | "function" | "procedure" | "trigger";
 
@@ -302,6 +303,62 @@ function createSchema(cfg: ConnectionConfig) {
 }
 
 
+function createDatabase(cfg: ConnectionConfig) {
+  st().setUi({
+    actionDialog: {
+      title: "Create database",
+      connId: cfg.id,
+      confirmLabel: "Create",
+      input: { label: "Name", value: "" },
+      buildSql: (n) => `CREATE DATABASE ${quoteIdent(n || "new_database", "postgres")};`,
+      afterRun: () => void st().loadDatabases(cfg.id),
+    },
+  });
+}
+
+/** A database on a PostgreSQL server listed under its connection (`cfg.id` is "<connection>::<database>"). */
+export function databaseMenu(cfg: ConnectionConfig): MenuEntry[] {
+  const server = baseId(cfg.id)!;
+  const db = dbOf(cfg.id)!;
+  const connected = st().conn[cfg.id]?.status === "connected";
+  const q = quoteIdent(db, "postgres");
+  return [
+    connected
+      ? { label: "Disconnect", icon: <Unplug />, onClick: () => void st().disconnectFrom(cfg.id) }
+      : { label: "Connect", icon: <Plug />, onClick: () => void st().connectTo(cfg.id) },
+    { label: "New query", icon: <FileCode />, onClick: () => st().newTab({ connId: cfg.id, title: `${db}.sql` }) },
+    { label: "Refresh", icon: <RefreshCw />, disabled: !connected, onClick: () => void st().refreshSchema(cfg.id) },
+    { label: "Create schema…", icon: <Database />, disabled: !connected, onClick: () => createSchema(cfg) },
+    "sep",
+    { label: `Import into ${db}…`, icon: <FileUp />, disabled: !connected, onClick: () => st().setUi({ importDialog: { connId: cfg.id } }) },
+    { label: "Users & privileges…", icon: <UserCog />, disabled: !connected, onClick: () => st().setUi({ usersDialog: { connId: cfg.id } }) },
+    "sep",
+    { label: "Copy name", icon: <Copy />, onClick: () => copy(db) },
+    "sep",
+    {
+      label: "Drop database…",
+      icon: <Trash2 />,
+      danger: true,
+      onClick: () =>
+        st().setUi({
+          actionDialog: {
+            title: `Drop database ${db}`,
+            connId: server,
+            danger: true,
+            confirmLabel: "Drop database",
+            message: `Database "${db}" with ALL its schemas and data will be permanently deleted. Type the name to confirm.`,
+            input: { label: `Type "${db}" to confirm`, value: "" },
+            requireInput: db,
+            buildSql: () => `DROP DATABASE ${q};`,
+            // our own connections to it would block the drop
+            beforeRun: () => st().disconnectFrom(cfg.id),
+            afterRun: () => void st().loadDatabases(server),
+          },
+        }),
+    },
+  ];
+}
+
 export function connectionMenu(cfg: ConnectionConfig): MenuEntry[] {
   const status = st().conn[cfg.id]?.status;
   const connected = status === "connected";
@@ -310,8 +367,17 @@ export function connectionMenu(cfg: ConnectionConfig): MenuEntry[] {
       ? { label: "Disconnect", icon: <Unplug />, onClick: () => void st().disconnectFrom(cfg.id) }
       : { label: "Connect", icon: <Plug />, onClick: () => (st().selectConnection(cfg.id), void st().connectTo(cfg.id)) },
     { label: "New query", icon: <FileCode />, onClick: () => st().newTab({ connId: cfg.id }) },
-    { label: "Refresh", icon: <RefreshCw />, disabled: !connected, onClick: () => void st().refreshSchema(cfg.id) },
-    connected ? { label: `Create ${cfg.kind === "mysql" ? "database" : "schema"}…`, icon: <Database />, onClick: () => createSchema(cfg) } : "sep",
+    {
+      label: "Refresh",
+      icon: <RefreshCw />,
+      disabled: !connected,
+      onClick: () => (isMultiDb(cfg) ? void st().loadDatabases(cfg.id) : void st().refreshSchema(cfg.id)),
+    },
+    connected
+      ? isMultiDb(cfg)
+        ? { label: "Create database…", icon: <Database />, onClick: () => createDatabase(cfg) }
+        : { label: `Create ${cfg.kind === "mysql" ? "database" : "schema"}…`, icon: <Database />, onClick: () => createSchema(cfg) }
+      : "sep",
     { label: "Import…", icon: <FileUp />, disabled: !connected, onClick: () => st().setUi({ importDialog: { connId: cfg.id } }) },
     { label: "Users & privileges…", icon: <UserCog />, disabled: !connected, onClick: () => st().setUi({ usersDialog: { connId: cfg.id } }) },
     "sep",

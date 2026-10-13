@@ -6,6 +6,7 @@ import { Button, cx, IconButton, Spinner, MOD } from "./ui";
 import { StructurePanel } from "./StructurePanel";
 import { DataGrid } from "./DataGrid";
 import { HistoryView } from "./HistoryView";
+import { baseId } from "../lib/connIds";
 
 export function ResultsPanel({ height }: { height?: number }) {
   const tab = useActiveTab();
@@ -18,7 +19,7 @@ export function ResultsPanel({ height }: { height?: number }) {
   const resultTab: ResultTab = rt?.resultTab ?? "results";
   const sets = rt?.output?.resultSets ?? [];
   const rs = sets[rt?.activeSet ?? 0];
-  const kind = connections.find((c) => c.id === tab.connId)?.kind ?? "postgres";
+  const kind = connections.find((c) => c.id === baseId(tab.connId))?.kind ?? "postgres";
 
   const openExport = () => rs && setUi({ exportJob: { rs, name: tab.title, kind, tabId: tab.id, connId: tab.connId, sql: rt?.lastSql } });
 

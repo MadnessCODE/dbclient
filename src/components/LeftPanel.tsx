@@ -4,6 +4,7 @@ import { ask } from "@tauri-apps/plugin-dialog";
 import {
   ChevronDown,
   ChevronRight,
+  Database,
   FolderPlus,
   Eye,
   Layers,
@@ -24,12 +25,13 @@ import {
   Zap,
   type LucideIcon,
 } from "lucide-react";
-import { errorText, type ConnectionConfig, type Project, type SchemaInfo, type TableStat } from "../lib/api";
+import { errorText, type ConnectionConfig, type DatabaseInfo, type Project, type SchemaInfo, type TableStat } from "../lib/api";
 import { accountKey, listAccounts, type Account } from "../lib/users";
 import { ProjectIcon } from "./ProjectIcon";
 import { quoteIdent } from "../lib/sql";
 import { useStore, type MenuEntry } from "../store";
-import { categoryMenu, connectionMenu, routineMenu, schemaMenu, tableMenu, type ObjectKind } from "../lib/treeActions";
+import { categoryMenu, connectionMenu, databaseMenu, routineMenu, schemaMenu, tableMenu, type ObjectKind } from "../lib/treeActions";
+import { isMultiDb, subId } from "../lib/connIds";
 import { Button, cx, DbIcon, EnvBadge, IconButton, SchemaIcon, SearchInput, Spinner } from "./ui";
 import { connColor, tint } from "../lib/connStyle";
 
@@ -356,6 +358,7 @@ function ConnectionNode({ cfg }: { cfg: ConnectionConfig }) {
                 onClick={(e) => {
                   e.stopPropagation();
                   void refreshSchema(cfg.id);
+                  if (isMultiDb(cfg)) void useStore.getState().loadDatabases(cfg.id);
                 }}
               >
                 {state?.schemaLoading ? <Spinner /> : <RefreshCw size={14} />}
@@ -397,8 +400,9 @@ function ConnectionNode({ cfg }: { cfg: ConnectionConfig }) {
               </button>
             </div>
           )}
-          {status === "connected" && !state?.schema && <Note depth={1} spinner text="Loading schemas…" />}
-          {status === "connected" && state?.schema && <SchemaList cfg={cfg} schemas={state.schema.schemas} />}
+          {status === "connected" && isMultiDb(cfg) && <DatabaseList cfg={cfg} databases={state?.databases} />}
+          {status === "connected" && !isMultiDb(cfg) && !state?.schema && <Note depth={1} spinner text="Loading schemas…" />}
+          {status === "connected" && !isMultiDb(cfg) && state?.schema && <SchemaList cfg={cfg} schemas={state.schema.schemas} />}
           {status === "connected" && <UsersNode cfg={cfg} />}
         </div>
       )}
@@ -504,27 +508,96 @@ function UsersNode({ cfg }: { cfg: ConnectionConfig }) {
   );
 }
 
-function SchemaList({ cfg, schemas }: { cfg: ConnectionConfig; schemas: SchemaInfo[] }) {
+/** Databases on a PostgreSQL server; each one opens on its own. */
+function DatabaseList({ cfg, databases }: { cfg: ConnectionConfig; databases?: DatabaseInfo[] }) {
   const [filter, setFilter] = useState("");
-  const firstUser = schemas.find((s) => !s.system)?.name;
-  const visible = schemas.filter((s) => matches(s.name, filter));
-  const word = cfg.kind === "mysql" ? "databases" : "schemas";
+  if (!databases) return <Note depth={1} spinner text="Loading databases…" />;
+  const visible = databases.filter((d) => matches(d.name, filter));
   return (
     <>
-      {schemas.length > 5 && <InlineSearch depth={1} value={filter} onChange={setFilter} placeholder={`Filter ${word}...`} />}
-      {visible.map((s) => (
-        <SchemaNode key={s.name} cfg={cfg} schema={s} defaultOpen={s.name === firstUser} />
+      {databases.length > 5 && <InlineSearch depth={1} value={filter} onChange={setFilter} placeholder="Filter databases..." />}
+      {visible.map((d) => (
+        <DatabaseNode key={d.name} cfg={cfg} db={d} />
       ))}
-      {visible.length === 0 && <Note depth={1} text={`No ${word} match “${filter}”`} />}
+      {visible.length === 0 && <Note depth={1} text={databases.length ? `No databases match “${filter}”` : "No databases you can connect to"} />}
     </>
   );
 }
 
-function SchemaNode({ cfg, schema: s, defaultOpen }: { cfg: ConnectionConfig; schema: SchemaInfo; defaultOpen: boolean }) {
+function DatabaseNode({ cfg, db }: { cfg: ConnectionConfig; db: DatabaseInfo }) {
+  // the schema subtree works on this database through its own id
+  const dbCfg = useMemo(() => ({ ...cfg, id: subId(cfg.id, db.name), database: db.name }), [cfg, db.name]);
+  const state = useStore((s) => s.conn[dbCfg.id]);
+  const status = state?.status ?? "idle";
+  const [open, setOpen] = useState(false);
+  const { connectTo, openContextMenu } = useStore.getState();
+
+  useEffect(() => {
+    if (status === "idle") setOpen(false);
+  }, [status]);
+
+  const onClick = () => {
+    if (!open && (status === "idle" || status === "error")) void connectTo(dbCfg.id);
+    setOpen(!open);
+  };
+
+  return (
+    <>
+      <TreeRow
+        depth={1}
+        open={open}
+        onClick={onClick}
+        onContextMenu={(e) => openContextMenu(e, databaseMenu(dbCfg))}
+        title={status === "error" ? state?.error : db.size === null ? "No CONNECT privilege" : undefined}
+      >
+        <span className="relative shrink-0">
+          <Database size={15} className={status === "connected" ? "text-pg" : "text-muted"} />
+          {status === "connecting" && <span className="absolute -right-0.5 -bottom-0.5 h-2 w-2 animate-pulse rounded-full bg-warn" />}
+          {status === "error" && <span className="absolute -right-0.5 -bottom-0.5 h-2 w-2 rounded-full bg-err" />}
+        </span>
+        <span className={cx("flex-1 truncate", db.size === null && "text-muted")}>{db.name}</span>
+        {db.size !== null && <span className="shrink-0 text-[11px] text-muted">{formatBytes(db.size)}</span>}
+      </TreeRow>
+      {open && (
+        <>
+          {status === "connecting" && <Note depth={2} spinner text="Connecting…" />}
+          {status === "error" && (
+            <div style={{ paddingLeft: indent(2) }} className="py-1.5 pr-2 text-[12px]">
+              <p className="selectable break-words text-err">{state?.error}</p>
+              <button className="mt-1 text-accent hover:underline" onClick={() => void connectTo(dbCfg.id)}>
+                Retry
+              </button>
+            </div>
+          )}
+          {status === "connected" && !state?.schema && <Note depth={2} spinner text="Loading schemas…" />}
+          {status === "connected" && state?.schema && <SchemaList cfg={dbCfg} schemas={state.schema.schemas} d={1} />}
+        </>
+      )}
+    </>
+  );
+}
+
+function SchemaList({ cfg, schemas, d = 0 }: { cfg: ConnectionConfig; schemas: SchemaInfo[]; d?: number }) {
+  const [filter, setFilter] = useState("");
+  const firstUser = (schemas.find((s) => !s.system && s.tables.length) ?? schemas.find((s) => !s.system))?.name;
+  const visible = schemas.filter((s) => matches(s.name, filter));
+  const word = cfg.kind === "mysql" ? "databases" : "schemas";
+  return (
+    <>
+      {schemas.length > 5 && <InlineSearch depth={1 + d} value={filter} onChange={setFilter} placeholder={`Filter ${word}...`} />}
+      {visible.map((s) => (
+        <SchemaNode key={s.name} cfg={cfg} schema={s} defaultOpen={s.name === firstUser} d={d} />
+      ))}
+      {visible.length === 0 && <Note depth={1 + d} text={`No ${word} match “${filter}”`} />}
+    </>
+  );
+}
+
+function SchemaNode({ cfg, schema: s, defaultOpen, d }: { cfg: ConnectionConfig; schema: SchemaInfo; defaultOpen: boolean; d: number }) {
   const [open, setOpen] = useState(defaultOpen);
   return (
     <>
-      <TreeRow depth={1} open={open} onClick={() => setOpen(!open)} onContextMenu={(e) => useStore.getState().openContextMenu(e, schemaMenu(cfg, s.name))}>
+      <TreeRow depth={1 + d} open={open} onClick={() => setOpen(!open)} onContextMenu={(e) => useStore.getState().openContextMenu(e, schemaMenu(cfg, s.name))}>
         <SchemaIcon className={s.system ? "opacity-50" : "text-fg-2"} />
         <span className={cx("flex-1 truncate", s.system && "text-fg-2")}>{s.name}</span>
         <span className="shrink-0 text-[11px] text-muted">{s.tables.length || ""}</span>
@@ -533,7 +606,7 @@ function SchemaNode({ cfg, schema: s, defaultOpen }: { cfg: ConnectionConfig; sc
         CATEGORIES.map((c) => {
           const items = s[c.key];
           if (items.length === 0 && (c.key === "matViews" || c.key === "procedures" || c.key === "triggers")) return null;
-          return <CategoryNode key={c.key} cfg={cfg} schema={s.name} category={c} items={items} stats={s.tableStats} />;
+          return <CategoryNode key={c.key} cfg={cfg} schema={s.name} category={c} items={items} stats={s.tableStats} d={d} />;
         })}
     </>
   );
@@ -545,12 +618,14 @@ function CategoryNode({
   category,
   items,
   stats,
+  d,
 }: {
   cfg: ConnectionConfig;
   schema: string;
   category: (typeof CATEGORIES)[number];
   items: string[];
   stats?: Record<string, TableStat>;
+  d: number;
 }) {
   const [open, setOpen] = useState(false);
   const [filter, setFilter] = useState("");
@@ -574,7 +649,7 @@ function CategoryNode({
 
   return (
     <>
-      <TreeRow depth={2} open={open} onClick={() => setOpen(!open)} onContextMenu={(e) => menu(e, categoryMenu(cfg, schema, category.key))}>
+      <TreeRow depth={2 + d} open={open} onClick={() => setOpen(!open)} onContextMenu={(e) => menu(e, categoryMenu(cfg, schema, category.key))}>
         <Icon size={15} className="text-muted" />
         <span>{label}</span>
         <span className="text-muted">({items.length})</span>
@@ -582,12 +657,12 @@ function CategoryNode({
       {open && (
         <>
           {items.length > SEARCH_FROM && (
-            <InlineSearch depth={3} value={filter} onChange={setFilter} placeholder={`Filter ${label.toLowerCase()}...`} />
+            <InlineSearch depth={3 + d} value={filter} onChange={setFilter} placeholder={`Filter ${label.toLowerCase()}...`} />
           )}
           {visible.slice(0, MAX_ITEMS).map((name) => (
             <TreeRow
               key={name}
-              depth={3}
+              depth={3 + d}
               leaf
               title={stats?.[name] ? undefined : isRelation ? "Double-click to open · right-click for more" : name}
               onMouseEnter={stats?.[name] ? (e) => tip.show(name, e.currentTarget) : undefined}
@@ -613,8 +688,8 @@ function CategoryNode({
               )}
             </TreeRow>
           ))}
-          {visible.length > MAX_ITEMS && <Note depth={3} text={`…and ${visible.length - MAX_ITEMS} more, type to filter`} />}
-          {items.length > 0 && visible.length === 0 && <Note depth={3} text={`Nothing matches “${filter}”`} />}
+          {visible.length > MAX_ITEMS && <Note depth={3 + d} text={`…and ${visible.length - MAX_ITEMS} more, type to filter`} />}
+          {items.length > 0 && visible.length === 0 && <Note depth={3 + d} text={`Nothing matches “${filter}”`} />}
         </>
       )}
       {tip.state && stats?.[tip.state.name] && <TableTip name={tip.state.name} stat={stats[tip.state.name]} anchor={tip.state.el} />}
