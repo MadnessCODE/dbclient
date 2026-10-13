@@ -14,6 +14,7 @@
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
     <link rel="stylesheet" href="style.css" />
+    <link rel="stylesheet" href="mockup.css" />
   </head>
   <body>
     <div class="bg" aria-hidden="true">
@@ -56,100 +57,10 @@
           <div class="scenes" role="tablist" aria-label="Demo">
             <button role="tab" data-scene="query" class="on">Query & edit</button>
             <button role="tab" data-scene="import">Parallel import</button>
+            <button role="tab" data-scene="er">ER diagrams</button>
             <button role="tab" data-scene="procs">Processes</button>
           </div>
-          <div class="frame-wrap">
-            <div class="frame" id="app">
-              <div class="t-bar">
-                <div class="t-left"><img src="icon.svg" alt="" width="22" height="22" /><div><b>DB Client</b><small>Connect • Query • Explore</small></div></div>
-                <div class="t-search"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7" /><path d="m20 20-3.5-3.5" /></svg>Search tables, columns, SQL…<kbd>Ctrl + K</kbd></div>
-                <div class="t-win"><i></i><i></i><i></i></div>
-              </div>
-              <div class="t-body">
-                <aside class="rail">
-                  <span class="ri" title="Home"><svg viewBox="0 0 24 24"><path d="M3 11 12 4l9 7v9H3z" /></svg></span>
-                  <span class="ri on" data-for="query" title="Query"><svg viewBox="0 0 24 24"><path d="M7 4v16l13-8z" /></svg></span>
-                  <span class="ri" title="Files"><svg viewBox="0 0 24 24"><path d="M6 3h8l4 4v14H6z" /></svg></span>
-                  <span class="ri tasks" data-for="import" title="Tasks"><svg viewBox="0 0 24 24"><path d="M4 6h3M4 12h3M4 18h3M10 6h10M10 12h10M10 18h10" /></svg><em class="badge">1</em></span>
-                  <span class="ri" data-for="procs" title="Processes"><svg viewBox="0 0 24 24"><path d="M3 12h4l3-8 4 16 3-8h4" /></svg></span>
-                  <span class="ri" title="Settings"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3" /><path d="M12 2v3M12 19v3M2 12h3M19 12h3M5 5l2 2M17 17l2 2M5 19l2-2M17 7l2-2" /></svg></span>
-                </aside>
-
-                <!-- Scene: query -->
-                <div class="scene" data-scene="query">
-                  <aside class="tree">
-                    <div class="tree-h">Connections</div>
-                    <div class="conn"><span class="db pg"></span>shop <em class="env prod">PROD</em></div>
-                    <div class="node l1 open">public</div>
-                    <div class="node l2 open">Tables <small>4</small></div>
-                    <div class="node l3 tbl hl">customers <small>12k</small></div>
-                    <div class="node l3 tbl">orders <small>480k</small></div>
-                    <div class="node l3 tbl">order_items <small>1.9M</small></div>
-                    <div class="node l3 tbl">products <small>2.4k</small></div>
-                    <div class="node l2">Views <small>2</small></div>
-                    <div class="node l2">Functions <small>6</small></div>
-                    <div class="node l1">Roles <small>5</small></div>
-                    <div class="conn dim"><span class="db my"></span>analytics <em class="env dev">DEV</em></div>
-                    <div class="conn dim"><span class="db pg"></span>staging <em class="env stg">STAGING</em></div>
-                  </aside>
-                  <section class="work">
-                    <div class="tabs"><span class="tab on">top_customers.sql</span><span class="tab">orders.sql</span><span class="tab add">+</span></div>
-                    <div class="toolbar">
-                      <span class="run">▶ Run</span><span class="tb">Explain</span><span class="tb">Format</span>
-                      <span class="conn-chip"><span class="db pg sm"></span>shop / public</span>
-                    </div>
-                    <pre class="editor"><code id="sql"></code><span class="caret"></span></pre>
-                    <div class="results">
-                      <div class="r-head"><span class="r-tab on">Results</span><span class="r-tab">Structure</span><span class="r-tab">History</span><span class="r-info" id="rinfo"></span></div>
-                      <div class="grid" id="grid"></div>
-                      <div class="r-foot"><span class="pending" id="pending"></span><span class="save" id="save">Save changes</span></div>
-                    </div>
-                  </section>
-                </div>
-
-                <!-- Scene: import -->
-                <div class="scene" data-scene="import" hidden>
-                  <aside class="tree clone"></aside>
-                  <div class="backdrop">
-                  <div class="wizard">
-                    <div class="w-head">
-                      <b>Import</b><span>shop_2026-10.sql.gz → shop</span>
-                      <ol class="steps"><li class="done">File</li><li class="done">Options</li><li class="on">Import</li></ol>
-                    </div>
-                    <div class="w-stats">
-                      <div><small>Progress</small><b id="ipct">0%</b></div>
-                      <div><small>Rows</small><b id="irows">0</b></div>
-                      <div><small>Speed</small><b id="ispeed">–</b></div>
-                      <div><small>Elapsed</small><b id="itime">0.0 s</b></div>
-                    </div>
-                    <div class="bar"><i id="ibar"></i></div>
-                    <div class="lanes" id="lanes"></div>
-                    <div class="w-foot"><span id="istatus">Splitting the dump and loading tables in parallel…</span><span class="btn-sm">Run in background</span></div>
-                  </div>
-                  </div>
-                </div>
-
-                <!-- Scene: processes -->
-                <div class="scene" data-scene="procs" hidden>
-                  <div class="procs">
-                    <div class="p-head">
-                      <b>Processes</b>
-                      <span class="conn-chip"><span class="db pg sm"></span>shop <em class="env prod">PROD</em> ▾</span>
-                      <span class="live"><i></i>Live</span>
-                    </div>
-                    <div class="p-cards">
-                      <div><small>Connections</small><b>24</b></div>
-                      <div><small>Active</small><b class="ok" id="pactive">3</b></div>
-                      <div><small>Waiting on locks</small><b class="warn">1</b></div>
-                      <div><small>Longest query</small><b id="plong">41 s</b></div>
-                    </div>
-                    <div class="p-table" id="ptable"></div>
-                    <div class="locks" id="locks"></div>
-                  </div>
-                </div>
-              </div>
-            </div>
-          </div>
+          <div class="frame-wrap"><div class="frame" id="app"></div></div>
         </div>
       </section>
 
@@ -254,6 +165,8 @@
       <a href="https://github.com/MadnessCODE/dbclient" target="_blank" rel="noopener">github.com/MadnessCODE/dbclient</a>
     </footer>
 
+    <script src="logos.js"></script>
+    <script src="mockup.js"></script>
     <script src="main.js"></script>
   </body>
 </html>
