@@ -7,6 +7,11 @@ without a section won't build.
 ## 0.1.3
 
 ### New
+- **Import connections from other tools.** DB Client finds the connections you already have in
+  DBeaver, pgAdmin 4, MySQL Workbench and `.pgpass` (or reads an exported file) and brings
+  them over in one click: host, port, user, database, SSL, SSH tunnel, environment, and folders
+  or server groups as projects. Saved passwords come along from DBeaver and `.pgpass`;
+  duplicates are recognized and skipped.
 - **Export a whole database or schema** into one `.sql` or `.sql.gz` file: right-click a
   database or schema → *Export…*. Structure and data, structure only or data only, optional
   DROP statements. Tables are read over several connections at once (big ones in key ranges),

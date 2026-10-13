@@ -1,6 +1,6 @@
 // Home page: animated hero and connection cards.
 import { useEffect, useMemo, useState } from "react";
-import { ArrowRight, FolderPlus, GitFork, KeyRound, Link2, Plus, ShieldAlert, Sparkles, TableProperties, Zap, type LucideIcon } from "lucide-react";
+import { ArrowRight, FolderPlus, GitFork, Import, KeyRound, Link2, Plus, ShieldAlert, Sparkles, TableProperties, Zap, type LucideIcon } from "lucide-react";
 import { type ConnectionConfig, type Project } from "../lib/api";
 import { connColor, tint } from "../lib/connStyle";
 import { useStore } from "../store";
@@ -55,6 +55,13 @@ export function HomePage() {
               className="flex items-center gap-2 rounded-lg border border-line-strong px-3 py-2 text-[13px] text-fg-2 hover:bg-hover hover:text-fg"
             >
               <FolderPlus size={15} /> New project
+            </button>
+            <button
+              onClick={() => useStore.getState().setUi({ connImport: true })}
+              title="Import connections from DBeaver, pgAdmin, MySQL Workbench or .pgpass"
+              className="flex items-center gap-2 rounded-lg border border-line-strong px-3 py-2 text-[13px] text-fg-2 hover:bg-hover hover:text-fg"
+            >
+              <Import size={15} /> Import
             </button>
             <button
               onClick={() => useStore.getState().setUi({ connDialog: { open: true } })}

@@ -6,6 +6,7 @@ import {
   ChevronRight,
   Database,
   FolderPlus,
+  Import,
   Eye,
   Layers,
   Lock,
@@ -151,6 +152,9 @@ function ConnectionsTree() {
           <Button title="New project (group of connections)" className="h-8 w-9 shrink-0 px-0" onClick={() => setUi({ projectDialog: { open: true } })}>
             <FolderPlus size={16} />
           </Button>
+          <Button title="Import connections from DBeaver, pgAdmin, Workbench…" className="h-8 w-9 shrink-0 px-0" onClick={() => setUi({ connImport: true })}>
+            <Import size={16} />
+          </Button>
         </div>
         {(connections.length > 3 || projects.length > 0) && <SearchInput value={filter} onChange={setFilter} placeholder="Search connections & projects..." />}
       </div>
@@ -164,7 +168,13 @@ function ConnectionsTree() {
           </div>
         )}
         {!loadError && connections.length === 0 && projects.length === 0 && (
-          <p className="px-3 py-4 text-center text-[12px] text-muted">No connections yet. Click “New Connection” to add one.</p>
+          <p className="px-3 py-4 text-center text-[12px] text-muted">
+            No connections yet. Click “New Connection”, or{" "}
+            <button className="text-accent hover:underline" onClick={() => setUi({ connImport: true })}>
+              import them from DBeaver, pgAdmin or Workbench
+            </button>
+            .
+          </p>
         )}
         {nothingFound && <Empty text="Nothing matches the search." />}
         {groups.map((g) => (

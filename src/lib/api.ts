@@ -49,6 +49,30 @@ export interface ConnectionInput extends ConnectionConfig {
   sshSecret: string | null;
 }
 
+export interface ExternalCandidate {
+  name: string;
+  kind: DbKind;
+  host: string;
+  port: number;
+  user: string;
+  database: string;
+  ssl: SslMode;
+  ssh: SshConfig | null;
+  password: string | null;
+  sshSecret: string | null;
+  /** Folder or server group in the other tool */
+  group: string | null;
+  environment: "dev" | "staging" | "production" | null;
+}
+
+export interface ExternalSource {
+  tool: string;
+  path: string;
+  connections: ExternalCandidate[];
+  error: string | null;
+  note: string | null;
+}
+
 export interface ExportOptions {
   /** PostgreSQL schemas, or the MySQL database */
   schemas: string[];
@@ -225,6 +249,8 @@ export const api = {
   inspectDump: (path: string) => invoke<DumpInfo>("inspect_dump", { path }),
   importDump: (connId: string, jobId: string, options: ImportOptions) => invoke<ImportSummary>("import_dump", { connId, jobId, options }),
   cancelImport: (jobId: string) => invoke<boolean>("cancel_import", { jobId }),
+  findExternalConnections: (withPasswords: boolean) => invoke<ExternalSource[]>("find_external_connections", { withPasswords }),
+  readConnectionsFile: (path: string, withPasswords: boolean) => invoke<ExternalSource>("read_connections_file", { path, withPasswords }),
   exportDatabase: (connId: string, jobId: string, options: ExportOptions) => invoke<ImportSummary>("export_database", { connId, jobId, options }),
   previewTableFile: (options: SourceOptions) => invoke<SourcePreview>("preview_table_file", { options }),
   importTableFile: (connId: string, jobId: string, options: TableImportOptions) => invoke<ImportSummary>("import_table_file", { connId, jobId, options }),

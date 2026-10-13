@@ -18,6 +18,7 @@ import { ImportJobDialog, ImportToasts } from "./components/ImportJobs";
 import { UsersDialogHost } from "./components/UsersDialog";
 import { ErDiagramHost } from "./components/ErDiagram";
 import { ExportDatabaseHost } from "./components/ExportDatabase";
+import { ImportConnectionsHost } from "./components/ImportConnections";
 import { startUpdateChecks } from "./lib/updater";
 
 export default function App() {
@@ -98,6 +99,7 @@ export default function App() {
       <UsersDialogHost />
       <ErDiagramHost />
       <ExportDatabaseHost />
+      <ImportConnectionsHost />
       <ImportToasts />
       <ContextMenuHost />
     </div>

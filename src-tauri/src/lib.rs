@@ -2,6 +2,7 @@ mod db;
 mod dump;
 mod er;
 mod export;
+mod external;
 mod error;
 mod import;
 mod projects;
@@ -393,6 +394,17 @@ async fn export_database(
     export::run(emit, &imports, &pool, job_id, options).await
 }
 
+/// Connections saved by DBeaver, pgAdmin, MySQL Workbench and .pgpass on this computer.
+#[tauri::command]
+async fn find_external_connections(with_passwords: bool) -> Vec<external::Found> {
+    tauri::async_runtime::spawn_blocking(move || external::discover(with_passwords)).await.unwrap_or_default()
+}
+
+#[tauri::command]
+async fn read_connections_file(path: String, with_passwords: bool) -> AppResult<external::Found> {
+    tauri::async_runtime::spawn_blocking(move || external::read_file(&path, with_passwords)).await.map_err(|e| msg(e.to_string()))?
+}
+
 #[tauri::command]
 fn cancel_import(imports: State<'_, import::Imports>, job_id: String) -> bool {
     imports.cancel(&job_id)
@@ -457,6 +469,8 @@ pub fn run() {
             preview_table_file,
             import_table_file,
             export_database,
+            find_external_connections,
+            read_connections_file,
             inspect_dump,
             read_text_file,
         ])

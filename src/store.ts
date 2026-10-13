@@ -205,6 +205,8 @@ interface State {
   erDialog: { connId: string; schema: string } | null;
   /** Database export: a whole database, or one schema */
   dbExport: { connId: string; schema?: string } | null;
+  /** Import connections from other tools */
+  connImport: boolean;
   /** Bumped after user changes so the tree reloads */
   usersVersion: number;
 
@@ -249,7 +251,7 @@ interface State {
   toggleTheme: () => void;
   setSettings: (patch: Partial<Settings>) => void;
   setUi: (
-    patch: Partial<Pick<State, "leftPanel" | "view" | "connDialog" | "projectDialog" | "paletteOpen" | "settingsOpen" | "aboutOpen" | "resultsMaximized" | "contextMenu" | "actionDialog" | "exportJob" | "importDialog" | "usersDialog" | "usersVersion" | "erDialog" | "dbExport">>,
+    patch: Partial<Pick<State, "leftPanel" | "view" | "connDialog" | "projectDialog" | "paletteOpen" | "settingsOpen" | "aboutOpen" | "resultsMaximized" | "contextMenu" | "actionDialog" | "exportJob" | "importDialog" | "usersDialog" | "usersVersion" | "erDialog" | "dbExport" | "connImport">>,
   ) => void;
   openContextMenu: (e: React.MouseEvent, items: MenuEntry[]) => void;
 }
@@ -310,6 +312,7 @@ export const useStore = create<State>()(
         usersDialog: null,
         erDialog: null,
         dbExport: null,
+        connImport: false,
         usersVersion: 0,
 
         connectionsError: null,
