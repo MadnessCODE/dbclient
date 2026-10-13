@@ -173,8 +173,15 @@ export function WorkerSlider({ value, onChange }: { value: number; onChange: (v:
             ▲ {DEFAULT_WORKERS} recommended
           </button>
         )}
-        <span title={`This computer has ${CORES} CPU cores. More than ${MAX_WORKERS} connections rarely helps and only loads the server.`}>{MAX_WORKERS} max</span>
+        <span>{MAX_WORKERS} max</span>
       </div>
+      {value === MAX_WORKERS && (
+        <p className="text-[11.5px] leading-snug text-muted">
+          {CORES > MAX_WORKERS
+            ? `This computer has ${CORES} CPU cores, but more than ${MAX_WORKERS} connections rarely helps and only loads the server.`
+            : `One connection per CPU core (${CORES}). More would only load the server.`}
+        </p>
+      )}
     </div>
   );
 }
