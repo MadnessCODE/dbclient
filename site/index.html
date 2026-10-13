@@ -162,17 +162,25 @@
           <article class="card reveal"><i class="ic" data-i="grid"></i><h3>Editable grid</h3><p>Excel-like selection, typed cells, JSON viewer, date pickers. Edits are saved in a single transaction.</p></article>
           <article class="card reveal"><i class="ic" data-i="key"></i><h3>SSH tunnels</h3><p>Reach private databases through a bastion. Host keys are pinned and passwords live in the OS keychain.</p></article>
           <article class="card reveal"><i class="ic" data-i="shield"></i><h3>Production guard</h3><p>Mark connections as PROD and every write asks for confirmation first. Colored everywhere so you always know where you are.</p></article>
-          <article class="card reveal"><i class="ic" data-i="arrows"></i><h3>Parallel import & export</h3><p>SQL dumps, CSV, Excel and JSON. Dumps are split and loaded over several connections, in the background.</p></article>
+          <article class="card reveal"><i class="ic" data-i="arrows"></i><h3>Parallel import & backups</h3><p>Load SQL dumps, CSV, Excel and JSON, or back up a whole database to one .sql.gz file. Several connections at once, in the background.</p></article>
           <article class="card reveal"><i class="ic" data-i="table"></i><h3>Structure editor</h3><p>Columns, indexes and foreign keys with an ALTER preview before anything touches the server.</p></article>
           <article class="card reveal"><i class="ic" data-i="users"></i><h3>Users & privileges</h3><p>Create users and roles, grant access to a database, a schema or a single view. See the SQL before applying.</p></article>
           <article class="card reveal"><i class="ic" data-i="activity"></i><h3>Process monitor</h3><p>Live sessions and running queries, lock waits and who blocks whom. Cancel a query or kill a connection.</p></article>
+          <article class="card reveal"><i class="ic" data-i="network"></i><h3>ER diagrams</h3><p>See every table and relationship of a schema, arrange it, and export one HTML file with the diagram and full table docs for your team.</p></article>
+          <article class="card reveal"><i class="ic" data-i="import"></i><h3>Move in, in one click</h3><p>Brings your connections over from DBeaver, pgAdmin, MySQL Workbench and .pgpass, with SSH tunnels, folders and saved passwords.</p></article>
+          <article class="card reveal"><i class="ic" data-i="refresh"></i><h3>Everywhere, always current</h3><p>Windows, macOS and Linux, on Intel and ARM. The app updates itself and tells you what&#39;s new.</p></article>
         </div>
       </section>
 
       <section id="speed" class="section">
         <h2 class="reveal">Faster than the <span class="grad">command line</span></h2>
-        <p class="sub reveal">Importing a 300 MB SQL dump (2.9 million rows). DB Client splits it and loads tables over 4 connections.</p>
+        <p class="sub reveal">DB Client works over several connections at once: dumps are split and loaded in parallel, backups read many tables (big ones in ranges) from the same snapshot.</p>
         <div class="bench reveal" id="bench">
+          <div class="b-switch" role="tablist">
+            <button data-set="import" class="on">Import a 300 MB dump</button>
+            <button data-set="export">Back up a 350 MB database</button>
+          </div>
+          <div class="b-set" data-set="import">
           <div class="b-group">
             <div class="b-title"><span class="db pg"></span>PostgreSQL</div>
             <div class="b-row"><span>psql</span><div class="b-track"><i data-v="4.7" data-max="20.1" class="slow"></i></div><b>4.7 s</b><span></span></div>
@@ -183,7 +191,22 @@
             <div class="b-row"><span>mysql CLI</span><div class="b-track"><i data-v="20.1" data-max="20.1" class="slow"></i></div><b>20.1 s</b><span></span></div>
             <div class="b-row"><span>DB Client</span><div class="b-track"><i data-v="8.2" data-max="20.1"></i></div><b>8.2 s</b><em class="x">2.5× faster</em></div>
           </div>
-          <p class="b-note">Local test, same machine and server for both. CSV with 1 million rows: 0.63 s into PostgreSQL.</p>
+          <p class="b-note">2.9 million rows, 4 connections. CSV with 1 million rows: 0.63 s into PostgreSQL.</p>
+          </div>
+          <div class="b-set" data-set="export" hidden>
+          <div class="b-group">
+            <div class="b-title"><span class="db pg"></span>PostgreSQL</div>
+            <div class="b-row"><span>pg_dump</span><div class="b-track"><i data-v="5.7" data-max="6.4" class="slow"></i></div><b>5.7 s</b><span></span></div>
+            <div class="b-row"><span>DB Client</span><div class="b-track"><i data-v="1.1" data-max="6.4"></i></div><b>1.1 s</b><em class="x">5.2× faster</em></div>
+          </div>
+          <div class="b-group">
+            <div class="b-title"><span class="db my"></span>MySQL</div>
+            <div class="b-row"><span>mysqldump</span><div class="b-track"><i data-v="6.4" data-max="6.4" class="slow"></i></div><b>6.4 s</b><span></span></div>
+            <div class="b-row"><span>DB Client</span><div class="b-track"><i data-v="1.1" data-max="6.4"></i></div><b>1.1 s</b><em class="x">5.8× faster</em></div>
+          </div>
+          <p class="b-note">3.2 million rows to one .sql file, 4 connections. Compressed .sql.gz: 1.3 s for both.</p>
+          </div>
+          <p class="b-note">Local tests, same machine and server for every tool.</p>
         </div>
       </section>
 

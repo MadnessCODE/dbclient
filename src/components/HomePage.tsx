@@ -1,6 +1,6 @@
 // Home page: animated hero and connection cards.
 import { useEffect, useMemo, useState } from "react";
-import { ArrowRight, FolderPlus, GitFork, Import, KeyRound, Link2, Plus, ShieldAlert, Sparkles, TableProperties, Zap, type LucideIcon } from "lucide-react";
+import { ArrowRight, DatabaseBackup, FolderPlus, Import, KeyRound, Network, Plus, ShieldAlert, Sparkles, TableProperties, Zap, type LucideIcon } from "lucide-react";
 import { type ConnectionConfig, type Project } from "../lib/api";
 import { connColor, tint } from "../lib/connStyle";
 import { useStore } from "../store";
@@ -13,9 +13,9 @@ const FEATURES: { icon: LucideIcon; title: string; text: string }[] = [
   { icon: Zap, title: "Native speed", text: "Rust core, streams 10k rows in milliseconds" },
   { icon: KeyRound, title: "SSH tunnels", text: "Reach private databases securely" },
   { icon: TableProperties, title: "Structure editor", text: "Columns, indexes, FKs with ALTER preview" },
-  { icon: Link2, title: "FK navigation", text: "Jump to related rows in one click" },
+  { icon: Network, title: "ER diagrams", text: "See every relationship, export to HTML" },
   { icon: ShieldAlert, title: "Production guard", text: "Confirms every write on PROD" },
-  { icon: GitFork, title: "Projects", text: "Group connections the way you work" },
+  { icon: DatabaseBackup, title: "Fast backups", text: "Whole databases, 5x faster than pg_dump" },
 ];
 
 const FLOATING = ["SELECT", "JOIN", "WHERE", "GROUP BY", "INDEX", "COMMIT", "EXPLAIN", "FK", "{ }", "*", "ORDER BY", "NULL"];

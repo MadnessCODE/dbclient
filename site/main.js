@@ -14,6 +14,9 @@ const ICONS = {
   table: '<path d="M4 6c0-1.7 3.6-3 8-3s8 1.3 8 3-3.6 3-8 3-8-1.3-8-3"/><path d="M4 6v12c0 1.7 3.6 3 8 3s8-1.3 8-3V6M4 12c0 1.7 3.6 3 8 3s8-1.3 8-3"/>',
   users: '<circle cx="9" cy="8" r="3.5"/><path d="M2.5 20c.6-3.5 3.3-5.5 6.5-5.5s5.9 2 6.5 5.5M16 4.5a3.5 3.5 0 0 1 0 7M18 14.5c2 .6 3.2 2.5 3.5 5.5"/>',
   activity: '<path d="M3 12h4l3-8 4 16 3-8h4"/>',
+  network: '<rect x="9" y="2" width="6" height="6" rx="1"/><rect x="2" y="16" width="6" height="6" rx="1"/><rect x="16" y="16" width="6" height="6" rx="1"/><path d="M5 16v-3h14v3M12 8v5"/>',
+  import: '<path d="M12 3v12m0 0-4-4m4 4 4-4"/><path d="M4 15v4a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-4"/>',
+  refresh: '<path d="M21 12a9 9 0 0 1-15.4 6.4L3 16M3 12a9 9 0 0 1 15.4-6.4L21 8"/><path d="M21 3v5h-5M3 21v-5h5"/>',
 };
 $$(".ic[data-i]").forEach((el) => (el.innerHTML = `<svg viewBox="0 0 24 24">${ICONS[el.dataset.i]}</svg>`));
 
@@ -47,17 +50,30 @@ if (!reduced)
     floating.appendChild(s);
   });
 
-// Benchmark bars
+// Benchmark bars: grow when scrolled into view and on every switch
 const bench = $("#bench");
+const growBars = (set) => {
+  const bars = $$(".b-track i", set);
+  bars.forEach((b) => ((b.style.transition = "none"), (b.style.width = "0")));
+  void set.offsetWidth;
+  bars.forEach((b) => ((b.style.transition = ""), (b.style.width = `${(b.dataset.v / b.dataset.max) * 100}%`)));
+};
 new IntersectionObserver(
   (es, o) => {
     if (!es[0].isIntersecting) return;
-    $$(".b-track i", bench).forEach((b) => (b.style.width = `${(b.dataset.v / b.dataset.max) * 100}%`));
+    growBars($(".b-set:not([hidden])", bench));
     bench.classList.add("go");
     o.disconnect();
   },
   { threshold: 0.4 },
 ).observe(bench);
+$$(".b-switch button", bench).forEach((btn) =>
+  btn.addEventListener("click", () => {
+    $$(".b-switch button", bench).forEach((b) => b.classList.toggle("on", b === btn));
+    $$(".b-set", bench).forEach((s) => (s.hidden = s.dataset.set !== btn.dataset.set));
+    growBars($(`.b-set[data-set=${btn.dataset.set}]`, bench));
+  }),
+);
 
 // Scale the 1200x720 mockup to fit
 const wrap = $(".frame-wrap");
