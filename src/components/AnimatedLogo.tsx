@@ -72,6 +72,8 @@ export function AnimatedLogo({ size = 150 }: { size?: number }) {
       height={size}
       viewBox="0 0 256 256"
       onClick={poke}
+      // the squish and the eyes grow past the viewBox
+      overflow="visible"
       className="about-logo cursor-pointer select-none"
       role="img"
       aria-label="MadnessCODE"
