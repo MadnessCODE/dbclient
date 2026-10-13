@@ -149,7 +149,7 @@ export function WorkerSlider({ value, onChange }: { value: number; onChange: (v:
       <div className="flex items-baseline justify-between">
         <span className="text-[12.5px] text-fg-2">Parallel connections</span>
         <span className="text-[12px] text-muted">
-          <b className="font-mono text-[15px] font-semibold text-fg">{value}</b> of {CORES} CPU cores
+          <b className="font-mono text-[15px] font-semibold text-fg">{value}</b> / {MAX_WORKERS}
         </span>
       </div>
       <input
@@ -173,7 +173,7 @@ export function WorkerSlider({ value, onChange }: { value: number; onChange: (v:
             ▲ {DEFAULT_WORKERS} recommended
           </button>
         )}
-        <span>{MAX_WORKERS}</span>
+        <span title={`This computer has ${CORES} CPU cores. More than ${MAX_WORKERS} connections rarely helps and only loads the server.`}>{MAX_WORKERS} max</span>
       </div>
     </div>
   );
