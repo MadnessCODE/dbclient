@@ -441,8 +441,8 @@ export function DataGrid({ rs, connId, kind, tabId }: { rs: ResultSet; connId: s
       );
       if (anyNew) items.push({ label: "Set DEFAULT", onClick: () => setValues(cells.filter((x) => display[x.r]?.existing === null), undefined) });
     }
-    items.push("sep", { label: "Copy", icon: <ClipboardCopy />, hint: `${MOD}+C`, onClick: copySelection });
-    if (editable) items.push({ label: "Paste", icon: <ClipboardPaste />, hint: `${MOD}+V`, onClick: () => void paste() });
+    items.push("sep", { label: "Copy", icon: <ClipboardCopy />, shortcut: `${MOD}+C`, onClick: copySelection });
+    if (editable) items.push({ label: "Paste", icon: <ClipboardPaste />, shortcut: `${MOD}+V`, onClick: () => void paste() });
     if (editable) {
       items.push(
         "sep",

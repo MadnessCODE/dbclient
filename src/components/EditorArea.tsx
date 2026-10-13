@@ -7,6 +7,13 @@ import {
   ArrowRightToLine,
   ChevronDown,
   ClipboardCopy,
+  ClipboardPaste,
+  Command,
+  MessageSquareCode,
+  Replace,
+  Scissors,
+  TextSelect,
+  ListVideo,
   Copy,
   CopyX,
   SquareX,
@@ -118,7 +125,7 @@ function tabMenu(tab: EditorTab, tabs: EditorTab[]): MenuEntry[] {
   const sameConn = tab.connId ? tabs.filter((t) => t.connId === tab.connId).map((t) => t.id) : [];
   const connName = st.connections.find((c) => c.id === baseId(tab.connId))?.name;
   return [
-    { label: "Close", icon: <X />, hint: `${MOD}+W`, onClick: () => void closeTabs([tab.id]) },
+    { label: "Close", icon: <X />, shortcut: `${MOD}+W`, onClick: () => void closeTabs([tab.id]) },
     { label: "Close others", icon: <CopyX />, disabled: others.length === 0, onClick: () => void closeTabs(others) },
     { label: "Close tabs to the right", icon: <ArrowRightToLine />, disabled: right.length === 0, onClick: () => void closeTabs(right) },
     { label: "Close all", icon: <SquareX />, onClick: () => void closeTabs(tabs.map((t) => t.id)) },
@@ -445,6 +452,50 @@ export function MenuItem({ label, shortcut, onClick, disabled }: { label: string
 }
 
 
+/** Right-click menu of the SQL editor, in the app's style. */
+function editorMenu(editor: MonacoEditor): MenuEntry[] {
+  const model = editor.getModel();
+  const sel = editor.getSelection();
+  const hasSel = !!sel && !sel.isEmpty();
+  const action = (id: string) => () => void editor.getAction(id)?.run();
+  const copy = () => sel && void navigator.clipboard.writeText(model?.getValueInRange(sel) ?? "");
+  const items: MenuEntry[] = [
+    { label: hasSel ? "Run selection" : "Run current statement", icon: <Play />, shortcut: `${MOD}+Enter`, onClick: action("run-statement") },
+    { label: "Run all", icon: <ListVideo />, shortcut: `${MOD}+Shift+Enter`, onClick: action("run-all") },
+    { label: "Explain", icon: <ListTree />, shortcut: `${MOD}+E`, onClick: action("explain-sql") },
+    { label: hasSel ? "Format selection" : "Format SQL", icon: <WandSparkles />, shortcut: "Shift+Alt+F", onClick: action("format-sql") },
+    "sep",
+    {
+      label: "Cut",
+      icon: <Scissors />,
+      shortcut: `${MOD}+X`,
+      disabled: !hasSel,
+      onClick: () => {
+        copy();
+        if (sel) editor.executeEdits("cut", [{ range: sel, text: "" }]);
+      },
+    },
+    { label: "Copy", icon: <Copy />, shortcut: `${MOD}+C`, disabled: !hasSel, onClick: copy },
+    {
+      label: "Paste",
+      icon: <ClipboardPaste />,
+      shortcut: `${MOD}+V`,
+      onClick: async () => {
+        const text = await navigator.clipboard.readText();
+        const at = editor.getSelection();
+        if (at) editor.executeEdits("paste", [{ range: at, text, forceMoveMarkers: true }]);
+        editor.focus();
+      },
+    },
+    { label: "Select all", icon: <TextSelect />, shortcut: `${MOD}+A`, onClick: () => model && editor.setSelection(model.getFullModelRange()) },
+    "sep",
+  ];
+  if (editor.getAction("editor.action.changeAll")) items.push({ label: "Change all occurrences", icon: <Replace />, shortcut: `${MOD}+F2`, onClick: action("editor.action.changeAll") });
+  if (editor.getAction("editor.action.commentLine")) items.push({ label: "Toggle comment", icon: <MessageSquareCode />, shortcut: `${MOD}+/`, onClick: action("editor.action.commentLine") });
+  if (editor.getAction("editor.action.quickCommand")) items.push({ label: "Command palette", icon: <Command />, shortcut: "F1", onClick: action("editor.action.quickCommand") });
+  return items;
+}
+
 function SqlEditor({ tab, editorRef }: { tab: EditorTab; editorRef: React.RefObject<MonacoEditor | null> }) {
   const theme = useStore((s) => s.theme);
   const fontSize = useStore((s) => s.settings.fontSize);
@@ -471,6 +522,7 @@ function SqlEditor({ tab, editorRef }: { tab: EditorTab; editorRef: React.RefObj
     editor.addAction({ id: "format-sql", label: "Format SQL", keybindings: [K.Shift | K.Alt | C.KeyF], run: (ed) => formatEditor(ed as MonacoEditor, tabRef.current) });
     editor.addAction({ id: "save-sql", label: "Save", keybindings: [K.CtrlCmd | C.KeyS], run: () => void saveTab(st().tabs.find((t) => t.id === tabRef.current.id)!) });
     editor.addAction({ id: "explain-sql", label: "Explain", keybindings: [K.CtrlCmd | C.KeyE], run: (ed) => void st().explainTab(tabRef.current.id, sqlToRun(ed as MonacoEditor, "statement", tabRef.current)) });
+    editor.onContextMenu((e) => st().openContextMenu(e.event.browserEvent as unknown as React.MouseEvent, editorMenu(editor)));
     editor.focus();
   };
 
@@ -499,6 +551,7 @@ function SqlEditor({ tab, editorRef }: { tab: EditorTab; editorRef: React.RefObj
           suggest: { showWords: false },
           quickSuggestions: { other: true, strings: false, comments: false },
           fixedOverflowWidgets: true,
+          contextmenu: false,
         }}
       />
     </div>

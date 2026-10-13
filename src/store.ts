@@ -126,6 +126,8 @@ export type MenuEntry =
       danger?: boolean;
       disabled?: boolean;
       hint?: string;
+      /** Keyboard shortcut shown on the right */
+      shortcut?: string;
       children?: MenuEntry[];
     };
 

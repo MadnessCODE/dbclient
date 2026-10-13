@@ -78,6 +78,7 @@ function MenuPanel({ items, x, y, onDone }: { items: MenuEntry[]; x: number; y: 
             >
               <span className="flex w-4 justify-center text-muted [&>svg]:h-[15px] [&>svg]:w-[15px]">{item.icon}</span>
               <span className="flex-1">{item.label}</span>
+              {item.shortcut && <span className="pl-6 text-[11.5px] text-muted">{item.shortcut}</span>}
               {item.children && <ChevronRight size={14} className="text-muted" />}
             </button>
             {item.children && openSub === i && (
