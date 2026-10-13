@@ -115,7 +115,8 @@ export function RunView({
       )}
       {summary && !summary.failed && !summary.cancelled && errorCount === 0 && (
         <p className="flex items-center gap-1.5 text-[12.5px] text-fg-2">
-          <Check size={15} className="text-ok" /> All statements ran without errors. The schema tree was refreshed.
+          <Check size={15} className="text-ok" />{" "}
+          {mode === "export" ? `File saved · ${formatBytes(summary.bytes)}` : "All statements ran without errors. The schema tree was refreshed."}
         </p>
       )}
     </div>
