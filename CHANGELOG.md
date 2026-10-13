@@ -7,6 +7,10 @@ without a section won't build.
 ## 0.1.3
 
 ### New
+- **ER diagrams.** Right-click a schema (or a MySQL database) → *ER diagram…* to see its tables,
+  views and relationships: drag tables around, zoom, search, click a table for its columns, keys
+  and indexes, or switch to *Documentation*. **Export HTML** saves everything as one file that
+  opens in any browser, offline, with your arrangement, ready to send to the team.
 - The app checks for updates while it runs (every few hours), not only at startup. "Later"
   hides a version until the next start.
 - "What's new" links in the update prompt and in About, and a short note after the app updates.

@@ -1,5 +1,6 @@
 mod db;
 mod dump;
+mod er;
 mod error;
 mod import;
 mod projects;
@@ -276,6 +277,11 @@ async fn get_schema(pools: State<'_, Pools>, id: String) -> AppResult<SchemaTree
 }
 
 #[tauri::command]
+async fn er_model(pools: State<'_, Pools>, id: String, schema: String) -> AppResult<Vec<er::ErTable>> {
+    er::load(&pools.get(&id)?, &schema).await
+}
+
+#[tauri::command]
 async fn get_table_structure(pools: State<'_, Pools>, id: String, schema: String, table: String) -> AppResult<TableStructure> {
     structure::load(&pools.get(&id)?, &schema, &table).await
 }
@@ -420,6 +426,7 @@ pub fn run() {
             forget_known_host,
             get_schema,
             get_table_structure,
+            er_model,
             list_collations,
             run_query,
             execute_batch,

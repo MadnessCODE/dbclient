@@ -41,6 +41,7 @@ Built with Rust and Tauri — small, native and quick to start.
 **Schema**
 - Schema tree with search, table sizes and right-click actions
 - Structure editor: columns, indexes, foreign keys, with ALTER preview
+- ER diagrams: right-click a schema → ER diagram; drag tables around, then export a single HTML file with the diagram and full table documentation
 
 **Import & export**
 - Export to CSV, Excel (real .xlsx), JSON and SQL INSERT — including all rows from the database, not just the loaded page

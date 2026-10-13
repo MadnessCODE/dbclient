@@ -16,6 +16,7 @@ import { ExportWizard } from "./components/ExportWizard";
 import { ImportWizard } from "./components/ImportWizard";
 import { ImportJobDialog, ImportToasts } from "./components/ImportJobs";
 import { UsersDialogHost } from "./components/UsersDialog";
+import { ErDiagramHost } from "./components/ErDiagram";
 import { startUpdateChecks } from "./lib/updater";
 
 export default function App() {
@@ -94,6 +95,7 @@ export default function App() {
       <ImportWizard />
       <ImportJobDialog />
       <UsersDialogHost />
+      <ErDiagramHost />
       <ImportToasts />
       <ContextMenuHost />
     </div>
