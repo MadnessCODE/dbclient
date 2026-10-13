@@ -81,7 +81,7 @@ export function RunView({
         <Stat label={mode === "export" ? "Tables done" : "Statements"} value={statements.toLocaleString()} />
       </div>
 
-      {p && p.workers.length > 0 && <Lanes workers={p.workers} running={running} total={workers} />}
+      {p && p.workers.length > 0 && <Lanes workers={p.workers} running={running} total={workers} main={mode !== "export"} />}
 
       {summary?.notes.map((n) => (
         <p key={n} className="flex items-start gap-1.5 text-[12px] text-fg-2">
@@ -173,15 +173,15 @@ export function WorkerSlider({ value, onChange }: { value: number; onChange: (v:
             ▲ {DEFAULT_WORKERS} recommended
           </button>
         )}
-        <span>{MAX_WORKERS} max</span>
+        <span className="group relative flex cursor-help items-center gap-1">
+          {MAX_WORKERS} max <Info size={11} />
+          <span className="pointer-events-none absolute right-0 bottom-full z-50 mb-1.5 hidden w-64 rounded-md border border-line-strong bg-raised px-2.5 py-2 text-[11.5px] leading-snug text-fg-2 shadow-xl group-hover:block">
+            {CORES > MAX_WORKERS
+              ? `This computer has ${CORES} CPU cores, but more than ${MAX_WORKERS} connections rarely helps and only loads the server.`
+              : `One connection per CPU core (${CORES}); more would only load the server.`}
+          </span>
+        </span>
       </div>
-      {value === MAX_WORKERS && (
-        <p className="text-[11.5px] leading-snug text-muted">
-          {CORES > MAX_WORKERS
-            ? `This computer has ${CORES} CPU cores, but more than ${MAX_WORKERS} connections rarely helps and only loads the server.`
-            : `One connection per CPU core (${CORES}). More would only load the server.`}
-        </p>
-      )}
     </div>
   );
 }
@@ -189,7 +189,8 @@ export function WorkerSlider({ value, onChange }: { value: number; onChange: (v:
 export const TASK_LABEL: Record<string, string> = { insert: "INSERT", copy: "COPY", index: "INDEX", sql: "SQL" };
 
 /** One lane per connection, animated while busy. */
-export function Lanes({ workers, running, total }: { workers: WorkerView[]; running: boolean; total: number }) {
+/** `main`: the first lane is the import's control connection (an export has none). */
+export function Lanes({ workers, running, total, main = true }: { workers: WorkerView[]; running: boolean; total: number; main?: boolean }) {
   const busy = workers.slice(1).filter((w) => w.busy).length;
   const two = workers.length > 9;
   if (!running) {
@@ -226,11 +227,11 @@ export function Lanes({ workers, running, total }: { workers: WorkerView[]; runn
           const on = running && w.busy;
           return (
             <div key={i} className="flex items-center gap-2.5 text-[12px]">
-              <span className={cx("w-9 shrink-0 font-mono tabular-nums", i === 0 ? "text-violet-300" : "text-muted")}>{i === 0 ? "main" : `#${i}`}</span>
+              <span className={cx("w-9 shrink-0 font-mono tabular-nums", main && i === 0 ? "text-violet-300" : "text-muted")}>{main ? (i === 0 ? "main" : `#${i}`) : `#${i + 1}`}</span>
               <div
                 className={cx(
                   "relative h-[18px] flex-1 overflow-hidden rounded-md border transition-colors duration-300",
-                  on ? (i === 0 ? "lane-on lane-main border-violet-400/50" : "lane-on border-accent/50") : "border-line bg-bg/40",
+                  on ? (main && i === 0 ? "lane-on lane-main border-violet-400/50" : "lane-on border-accent/50") : "border-line bg-bg/40",
                 )}
               >
                 {on && <span className="lane-dot" />}
