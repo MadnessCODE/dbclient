@@ -1,0 +1,363 @@
+// Context menu actions for schema tree objects and connections.
+import {
+  ClipboardCopy,
+  Code,
+  Copy,
+  Database,
+  Eraser,
+  FileCode,
+  FileSpreadsheet,
+  FileUp,
+  UserCog,
+  FolderInput,
+  Hash,
+  Pencil,
+  Play,
+  Plug,
+  Plus,
+  RefreshCw,
+  TableProperties,
+  Trash2,
+  Unplug,
+} from "lucide-react";
+import { ask } from "@tauri-apps/plugin-dialog";
+import { api, errorText, kindLabel, type ConnectionConfig, type DbKind } from "./api";
+import { quoteIdent } from "./sql";
+import { useStore, type MenuEntry } from "../store";
+
+export type ObjectKind = "table" | "view" | "matview" | "function" | "procedure" | "trigger";
+
+const st = () => useStore.getState();
+const copy = (text: string) => void navigator.clipboard.writeText(text);
+
+function fq(kind: DbKind, schema: string, name: string) {
+  return `${quoteIdent(schema, kind)}.${quoteIdent(name, kind)}`;
+}
+
+function openSql(connId: string, sql: string, title: string, opts: { run?: boolean; schema?: string; table?: string; structure?: boolean } = {}) {
+  st().newTab({
+    sql,
+    connId,
+    title,
+    run: opts.run,
+    table: opts.schema && opts.table ? { schema: opts.schema, table: opts.table } : undefined,
+    resultTab: opts.structure ? "structure" : undefined,
+  });
+}
+
+/** Detaches tabs from a dropped/renamed table (the SQL stays). */
+function forgetTable(connId: string, schema: string, table: string) {
+  for (const t of st().tabs) {
+    if (t.connId === connId && t.table?.schema === schema && t.table.table === table) st().updateTab(t.id, { table: undefined });
+  }
+}
+
+
+export function tableMenu(cfg: ConnectionConfig, schema: string, name: string, kind: ObjectKind): MenuEntry[] {
+  const k = cfg.kind;
+  const full = fq(k, schema, name);
+  const connId = cfg.id;
+  const isTable = kind === "table";
+  const dropKw = kind === "view" ? "VIEW" : kind === "matview" ? "MATERIALIZED VIEW" : "TABLE";
+
+  const scriptAs = async (what: "select" | "insert" | "update" | "delete" | "create") => {
+    try {
+      const s = await api.getTableStructure(connId, schema, name);
+      const cols = s.columns.map((c) => quoteIdent(c.name, k));
+      const pk = s.columns.filter((c) => c.primaryKey).map((c) => quoteIdent(c.name, k));
+      const where = (pk.length ? pk : cols.slice(0, 1)).map((c) => `${c} = ?`).join("\n  AND ");
+      const sql = {
+        select: `SELECT\n    ${cols.join(",\n    ")}\nFROM ${full}\nLIMIT 100;`,
+        insert: `INSERT INTO ${full} (\n    ${cols.join(",\n    ")}\n) VALUES (\n    ${cols.map(() => "?").join(",\n    ")}\n);`,
+        update: `UPDATE ${full}\nSET\n    ${cols.filter((c) => !pk.includes(c)).map((c) => `${c} = ?`).join(",\n    ")}\nWHERE ${where};`,
+        delete: `DELETE FROM ${full}\nWHERE ${where};`,
+        create: s.ddl,
+      }[what];
+      openSql(connId, sql, `${name}_${what}.sql`, { schema, table: name });
+    } catch (e) {
+      alert(errorText(e));
+    }
+  };
+
+  const exportData = async () => {
+    try {
+      const out = await api.runQuery(connId, crypto.randomUUID(), `SELECT * FROM ${full}`, st().settings.maxRows);
+      const rs = out.resultSets[0];
+      if (rs) st().setUi({ exportJob: { rs, name, kind: cfg.kind, connId, sql: `SELECT * FROM ${full}` } });
+    } catch (e) {
+      alert(errorText(e));
+    }
+  };
+
+  const items: MenuEntry[] = [
+    { label: "Open (first 100 rows)", icon: <Play />, onClick: () => openSql(connId, `SELECT *\nFROM ${full}\nLIMIT 100;`, `${name}.sql`, { run: true, schema, table: name }) },
+    { label: "Structure", icon: <TableProperties />, onClick: () => openSql(connId, `SELECT *\nFROM ${full}\nLIMIT 100;`, `${name}.sql`, { run: true, schema, table: name, structure: true }) },
+    { label: "Count rows", icon: <Hash />, onClick: () => openSql(connId, `SELECT COUNT(*) AS total\nFROM ${full};`, `${name}_count.sql`, { run: true, schema, table: name }) },
+    "sep",
+    {
+      label: "Script as",
+      icon: <Code />,
+      children: [
+        { label: "SELECT", onClick: () => void scriptAs("select") },
+        { label: "INSERT", onClick: () => void scriptAs("insert"), disabled: !isTable },
+        { label: "UPDATE", onClick: () => void scriptAs("update"), disabled: !isTable },
+        { label: "DELETE", onClick: () => void scriptAs("delete"), disabled: !isTable },
+        "sep",
+        { label: isTable ? "CREATE TABLE" : "CREATE VIEW", onClick: () => void scriptAs("create") },
+      ],
+    },
+    {
+      label: "Copy",
+      icon: <Copy />,
+      children: [
+        { label: "Name", onClick: () => copy(name) },
+        { label: "Full name (schema.table)", onClick: () => copy(full) },
+        { label: "DDL (CREATE …)", onClick: () => void api.getTableStructure(connId, schema, name).then((s) => copy(s.ddl), (e) => alert(errorText(e))) },
+      ],
+    },
+    { label: "Export data…", icon: <FileSpreadsheet />, onClick: () => void exportData() },
+    "sep",
+  ];
+
+  if (isTable) {
+    items.push(
+      {
+        label: "Rename…",
+        icon: <Pencil />,
+        onClick: () =>
+          st().setUi({
+            actionDialog: {
+              title: `Rename ${name}`,
+              connId,
+              confirmLabel: "Rename",
+              input: { label: "New name", value: name },
+              buildSql: (n) => (k === "mysql" ? `RENAME TABLE ${full} TO ${fq(k, schema, n)};` : `ALTER TABLE ${full} RENAME TO ${quoteIdent(n, k)};`),
+              afterRun: () => forgetTable(connId, schema, name),
+            },
+          }),
+      },
+      {
+        label: "Duplicate",
+        icon: <ClipboardCopy />,
+        children: [
+          { label: "Structure only…", onClick: () => duplicate(cfg, schema, name, false) },
+          { label: "Structure and data…", onClick: () => duplicate(cfg, schema, name, true) },
+        ],
+      },
+      {
+        label: "Truncate…",
+        icon: <Eraser />,
+        danger: true,
+        onClick: () =>
+          st().setUi({
+            actionDialog: {
+              title: `Truncate ${name}`,
+              connId,
+              danger: true,
+              confirmLabel: "Truncate",
+              message: `All rows in ${schema}.${name} will be permanently deleted. The table itself stays.`,
+              buildSql: () => `TRUNCATE TABLE ${full};`,
+            },
+          }),
+      },
+    );
+  }
+  items.push({
+    label: `Drop ${kind === "table" ? "table" : "view"}…`,
+    icon: <Trash2 />,
+    danger: true,
+    onClick: () =>
+      st().setUi({
+        actionDialog: {
+          title: `Drop ${name}`,
+          connId,
+          danger: true,
+          confirmLabel: "Drop",
+          message: `${schema}.${name} and all its data will be permanently deleted. This cannot be undone.`,
+          buildSql: () => `DROP ${dropKw} ${full};`,
+          afterRun: () => forgetTable(connId, schema, name),
+        },
+      }),
+  });
+  return items;
+}
+
+function duplicate(cfg: ConnectionConfig, schema: string, name: string, withData: boolean) {
+  const k = cfg.kind;
+  const src = fq(k, schema, name);
+  st().setUi({
+    actionDialog: {
+      title: `Duplicate ${name}`,
+      connId: cfg.id,
+      confirmLabel: "Create copy",
+      input: { label: "New table name", value: `${name}_copy` },
+      buildSql: (n) => {
+        const dst = fq(k, schema, n);
+        const create = k === "mysql" ? `CREATE TABLE ${dst} LIKE ${src};` : `CREATE TABLE ${dst} (LIKE ${src} INCLUDING ALL);`;
+        return withData ? `${create}\nINSERT INTO ${dst} SELECT * FROM ${src};` : create;
+      },
+    },
+  });
+}
+
+
+export function routineMenu(cfg: ConnectionConfig, schema: string, name: string, kind: ObjectKind): MenuEntry[] {
+  const k = cfg.kind;
+  const full = fq(k, schema, name);
+  const kw = kind === "procedure" ? "PROCEDURE" : kind === "trigger" ? "TRIGGER" : "FUNCTION";
+  const call = kind === "procedure" ? `CALL ${full}();` : `SELECT ${full}();`;
+  const items: MenuEntry[] = [];
+  if (kind !== "trigger") items.push({ label: kind === "procedure" ? "Script CALL" : "Script SELECT", icon: <Play />, onClick: () => openSql(cfg.id, call, `${name}.sql`) });
+  items.push({ label: "Copy name", icon: <Copy />, onClick: () => copy(name) }, "sep", {
+    label: `Drop ${kind}…`,
+    icon: <Trash2 />,
+    danger: true,
+    // a Postgres trigger needs "ON table", which isn't known here
+    disabled: kind === "trigger" && k === "postgres",
+    hint: kind === "trigger" && k === "postgres" ? "Use DROP TRIGGER name ON table in the editor" : undefined,
+    onClick: () =>
+      st().setUi({
+        actionDialog: {
+          title: `Drop ${name}`,
+          connId: cfg.id,
+          danger: true,
+          confirmLabel: "Drop",
+          message: `${kw.toLowerCase()} ${schema}.${name} will be permanently deleted.`,
+          buildSql: () => `DROP ${kw} ${full};`,
+        },
+      }),
+  });
+  return items;
+}
+
+
+export function schemaMenu(cfg: ConnectionConfig, schema: string): MenuEntry[] {
+  const k = cfg.kind;
+  const word = k === "mysql" ? "database" : "schema";
+  const Word = k === "mysql" ? "Database" : "Schema";
+  const s = quoteIdent(schema, k);
+  return [
+    { label: "New query", icon: <FileCode />, onClick: () => openSql(cfg.id, k === "mysql" ? `USE ${s};\n\n` : `SET search_path TO ${s};\n\n`, `${schema}.sql`) },
+    { label: "Create table…", icon: <Plus />, onClick: () => openSql(cfg.id, createTableTemplate(k, schema), "new_table.sql") },
+    { label: `Create ${word}…`, icon: <Database />, onClick: () => createSchema(cfg) },
+    "sep",
+    { label: `Import into ${schema}…`, icon: <FileUp />, onClick: () => st().setUi({ importDialog: { connId: cfg.id, database: schema } }) },
+    "sep",
+    { label: "Copy name", icon: <Copy />, onClick: () => copy(schema) },
+    { label: "Refresh", icon: <RefreshCw />, onClick: () => void st().refreshSchema(cfg.id) },
+    "sep",
+    {
+      label: `Drop ${word}…`,
+      icon: <Trash2 />,
+      danger: true,
+      onClick: () =>
+        st().setUi({
+          actionDialog: {
+            title: `Drop ${word} ${schema}`,
+            connId: cfg.id,
+            danger: true,
+            confirmLabel: `Drop ${word}`,
+            message: `${Word} "${schema}" with ALL its tables and data will be permanently deleted. Type the name to confirm.`,
+            input: { label: `Type "${schema}" to confirm`, value: "" },
+            requireInput: schema,
+            buildSql: () => (k === "mysql" ? `DROP DATABASE ${s};` : `DROP SCHEMA ${s} CASCADE;`),
+          },
+        }),
+    },
+  ];
+}
+
+export function categoryMenu(cfg: ConnectionConfig, schema: string, category: string): MenuEntry[] {
+  const items: MenuEntry[] = [];
+  if (category === "tables") items.push({ label: "Create table…", icon: <Plus />, onClick: () => openSql(cfg.id, createTableTemplate(cfg.kind, schema), "new_table.sql") });
+  if (category === "views")
+    items.push({
+      label: "Create view…",
+      icon: <Plus />,
+      onClick: () => openSql(cfg.id, `CREATE VIEW ${fq(cfg.kind, schema, "new_view")} AS\nSELECT *\nFROM ${quoteIdent(schema, cfg.kind)}.table_name;`, "new_view.sql"),
+    });
+  items.push({ label: "Refresh", icon: <RefreshCw />, onClick: () => void st().refreshSchema(cfg.id) });
+  return items;
+}
+
+function createTableTemplate(k: DbKind, schema: string) {
+  const t = fq(k, schema, "new_table");
+  return k === "postgres"
+    ? `CREATE TABLE ${t} (\n    id         bigserial PRIMARY KEY,\n    name       varchar(100) NOT NULL,\n    created_at timestamp NOT NULL DEFAULT now()\n);`
+    : `CREATE TABLE ${t} (\n    id         BIGINT AUTO_INCREMENT PRIMARY KEY,\n    name       VARCHAR(100) NOT NULL,\n    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP\n);`;
+}
+
+function createSchema(cfg: ConnectionConfig) {
+  const k = cfg.kind;
+  st().setUi({
+    actionDialog: {
+      title: k === "mysql" ? "Create database" : "Create schema",
+      connId: cfg.id,
+      confirmLabel: "Create",
+      input: { label: "Name", value: "" },
+      buildSql: (n) =>
+        k === "mysql" ? `CREATE DATABASE ${quoteIdent(n || "new_database", k)} CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci;` : `CREATE SCHEMA ${quoteIdent(n || "new_schema", k)};`,
+    },
+  });
+}
+
+
+export function connectionMenu(cfg: ConnectionConfig): MenuEntry[] {
+  const status = st().conn[cfg.id]?.status;
+  const connected = status === "connected";
+  return [
+    connected
+      ? { label: "Disconnect", icon: <Unplug />, onClick: () => void st().disconnectFrom(cfg.id) }
+      : { label: "Connect", icon: <Plug />, onClick: () => (st().selectConnection(cfg.id), void st().connectTo(cfg.id)) },
+    { label: "New query", icon: <FileCode />, onClick: () => st().newTab({ connId: cfg.id }) },
+    { label: "Refresh", icon: <RefreshCw />, disabled: !connected, onClick: () => void st().refreshSchema(cfg.id) },
+    connected ? { label: `Create ${cfg.kind === "mysql" ? "database" : "schema"}…`, icon: <Database />, onClick: () => createSchema(cfg) } : "sep",
+    { label: "Import…", icon: <FileUp />, disabled: !connected, onClick: () => st().setUi({ importDialog: { connId: cfg.id } }) },
+    { label: "Users & privileges…", icon: <UserCog />, disabled: !connected, onClick: () => st().setUi({ usersDialog: { connId: cfg.id } }) },
+    "sep",
+    { label: "Edit…", icon: <Pencil />, onClick: () => st().setUi({ connDialog: { open: true, editing: cfg } }) },
+    {
+      label: "Duplicate",
+      icon: <ClipboardCopy />,
+      onClick: async () => {
+        try {
+          const copyCfg = await api.saveConnection({ ...cfg, id: "", name: `${cfg.name} (copy)`, savePassword: false, password: null, sshSecret: null });
+          st().upsertConnection(copyCfg);
+        } catch (e) {
+          alert(errorText(e));
+        }
+      },
+    },
+    {
+      label: "Move to project",
+      icon: <FolderInput />,
+      children: [
+        ...[...st().projects]
+          .sort((a, b) => a.name.localeCompare(b.name))
+          .map(
+            (p): MenuEntry => ({
+              label: `${p.id === cfg.projectId ? "✓ " : ""}${p.icon?.type === "emoji" ? `${p.icon.value} ` : ""}${p.name}`,
+              disabled: p.id === cfg.projectId,
+              onClick: () => void st().moveConnections([cfg.id], p.id),
+            }),
+          ),
+        ...(st().projects.length ? (["sep"] as MenuEntry[]) : []),
+        { label: "No project", disabled: !cfg.projectId, onClick: () => void st().moveConnections([cfg.id], null) },
+        { label: "New project…", onClick: () => st().setUi({ projectDialog: { open: true } }) },
+      ],
+    },
+    { label: "Copy host:port", icon: <Copy />, onClick: () => copy(`${cfg.host}:${cfg.port}`) },
+    "sep",
+    {
+      label: "Delete connection…",
+      icon: <Trash2 />,
+      danger: true,
+      onClick: async () => {
+        if (await ask(`Delete connection "${cfg.name}" (${kindLabel(cfg.kind)})? The database itself is not affected.`, { title: "Delete connection", kind: "warning" })) {
+          await st().removeConnection(cfg.id).catch((e) => alert(errorText(e)));
+        }
+      },
+    },
+  ];
+}
+

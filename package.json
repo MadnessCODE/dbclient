@@ -1,0 +1,37 @@
+{
+  "name": "dbclient",
+  "private": true,
+  "version": "0.1.0",
+  "author": "MadnessCODE",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc && vite build",
+    "preview": "vite preview",
+    "tauri": "tauri"
+  },
+  "dependencies": {
+    "@monaco-editor/react": "^4.7.0",
+    "@tailwindcss/vite": "^4.3.3",
+    "@tanstack/react-virtual": "^3.14.15",
+    "@tauri-apps/api": "^2",
+    "@tauri-apps/plugin-dialog": "^2.8.2",
+    "@tauri-apps/plugin-notification": "^2.6.0",
+    "@tauri-apps/plugin-opener": "^2",
+    "lucide-react": "^1.55.0",
+    "monaco-editor": "^0.57.0",
+    "react": "^19.1.0",
+    "react-dom": "^19.1.0",
+    "sql-formatter": "^15.9.0",
+    "tailwindcss": "^4.3.3",
+    "zustand": "^5.0.15"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2",
+    "@types/react": "^19.1.8",
+    "@types/react-dom": "^19.1.6",
+    "@vitejs/plugin-react": "^6.0.2",
+    "typescript": "~6.0.3",
+    "vite": "^8.0.16"
+  }
+}

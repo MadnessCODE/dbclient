@@ -1,0 +1,35 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <!-- Ikonica aplikacije DB Client: baza podataka na plavo-ljubicastom gradijentu (izvor za `tauri icon`). -->
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#3b82f6" />
+      <stop offset="0.55" stop-color="#2563eb" />
+      <stop offset="1" stop-color="#7c3aed" />
+    </linearGradient>
+    <radialGradient id="glow" cx="0.3" cy="0.2" r="0.8">
+      <stop offset="0" stop-color="#ffffff" stop-opacity="0.35" />
+      <stop offset="0.6" stop-color="#ffffff" stop-opacity="0" />
+    </radialGradient>
+    <linearGradient id="disk" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#ffffff" />
+      <stop offset="1" stop-color="#dbe7ff" />
+    </linearGradient>
+  </defs>
+  <rect x="48" y="48" width="928" height="928" rx="208" fill="url(#bg)" />
+  <rect x="48" y="48" width="928" height="928" rx="208" fill="url(#glow)" />
+  <!-- tri "diska" baze -->
+  <g fill="url(#disk)">
+    <path d="M272 330 C272 268 382 232 512 232 C642 232 752 268 752 330 L752 418 C752 480 642 516 512 516 C382 516 272 480 272 418 Z" />
+    <path d="M272 470 C312 516 404 546 512 546 C620 546 712 516 752 470 L752 558 C752 620 642 656 512 656 C382 656 272 620 272 558 Z" />
+    <path d="M272 610 C312 656 404 686 512 686 C620 686 712 656 752 610 L752 698 C752 760 642 796 512 796 C382 796 272 760 272 698 Z" />
+  </g>
+  <!-- poklopac gornjeg diska -->
+  <ellipse cx="512" cy="330" rx="240" ry="86" fill="#ffffff" />
+  <ellipse cx="512" cy="330" rx="200" ry="62" fill="#2563eb" opacity="0.18" />
+  <!-- svetla na diskovima -->
+  <g fill="#2563eb">
+    <circle cx="664" cy="438" r="20" />
+    <circle cx="664" cy="578" r="20" />
+    <circle cx="664" cy="718" r="20" />
+  </g>
+</svg>
