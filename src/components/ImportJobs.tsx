@@ -4,7 +4,9 @@ import { createPortal } from "react-dom";
 import { CircleAlert, CircleCheck, FileUp, ListChecks, Minimize2, Square, TriangleAlert, X } from "lucide-react";
 import { api } from "../lib/api";
 import { isDone, isRunning, jobPercent, outcome, useImports, type ImportJob } from "../lib/importJobs";
+import { useUpdater } from "../lib/updater";
 import { RunView } from "./importParts";
+import { UpdateToast } from "./UpdateToast";
 import { Button, cx, Modal, Spinner } from "./ui";
 
 /** Progress dialog; closing it only hides it, the import keeps running. */
@@ -234,9 +236,11 @@ export function ImportToasts() {
   const toasts = useImports((s) => s.toasts);
   const close = useImports((s) => s.closeToast);
   const show = useImports((s) => s.show);
-  if (toasts.length === 0) return null;
+  const update = useUpdater((s) => s.prompt);
+  if (toasts.length === 0 && !update) return null;
   return (
     <div className="pointer-events-none fixed bottom-5 right-5 z-[90] flex w-[380px] flex-col gap-2.5">
+      <UpdateToast />
       {toasts.map((t) => (
         <div
           key={t.id}

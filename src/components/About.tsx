@@ -6,6 +6,7 @@ import { ExternalLink } from "lucide-react";
 import { useStore } from "../store";
 import { DbIcon, Modal } from "./ui";
 import { AnimatedLogo } from "./AnimatedLogo";
+import { checkForUpdates, useUpdater } from "../lib/updater";
 
 export const AUTHOR = "MadnessCODE";
 export const AUTHOR_URL = "https://github.com/madnesscode";
@@ -90,6 +91,7 @@ export function AboutDialog() {
               {version ? `Version ${version}` : " "}
               <span className="rounded border border-warn/50 bg-warn/15 px-1.5 py-px text-[10px] font-bold tracking-wider text-warn">BETA</span>
             </p>
+            <UpdateCheck />
             <p className="mx-auto mt-2 max-w-[300px] text-[13px] text-fg-2">Fast desktop client for PostgreSQL and MySQL. Built with Rust and Tauri.</p>
             <button onClick={() => void openUrl(AUTHOR_URL)} className="mt-3 inline-flex items-center gap-1.5 text-[12px] text-accent hover:underline">
               <GithubMark /> github.com/madnesscode <ExternalLink size={12} />
@@ -102,6 +104,34 @@ export function AboutDialog() {
         </div>
       </div>
     </Modal>
+  );
+}
+
+function UpdateCheck() {
+  const { status, version, error } = useUpdater();
+  const text =
+    status === "checking"
+      ? "Checking for updates…"
+      : status === "latest"
+        ? "You're on the latest version"
+        : status === "available" || status === "downloading"
+          ? `Version ${version} is available`
+          : status === "error"
+            ? "Update check failed"
+            : null;
+  return (
+    <p className="mt-1 text-[11.5px]" title={status === "error" ? error : undefined}>
+      {text && <span className={status === "error" ? "text-err" : status === "available" ? "text-accent" : "text-muted"}>{text} · </span>}
+      {status === "available" ? (
+        <button onClick={() => useUpdater.setState({ prompt: true })} className="text-accent hover:underline">
+          Install
+        </button>
+      ) : (
+        <button disabled={status === "checking" || status === "downloading"} onClick={() => void checkForUpdates()} className="text-accent hover:underline disabled:opacity-50">
+          Check for updates
+        </button>
+      )}
+    </p>
   );
 }
 

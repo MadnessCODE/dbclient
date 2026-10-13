@@ -42,6 +42,8 @@ csv = "1.4.0"
 calamine = "0.36.1"
 encoding_rs = "0.8.42"
 encoding_rs_io = "0.1.8"
+tauri-plugin-updater = "2"
+tauri-plugin-process = "2"
 
 # Passwords live in the OS keychain: Windows Credential Manager / macOS Keychain / Linux Secret Service
 [target.'cfg(target_os = "windows")'.dependencies]

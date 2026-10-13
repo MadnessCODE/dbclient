@@ -16,6 +16,7 @@ import { ExportWizard } from "./components/ExportWizard";
 import { ImportWizard } from "./components/ImportWizard";
 import { ImportJobDialog, ImportToasts } from "./components/ImportJobs";
 import { UsersDialogHost } from "./components/UsersDialog";
+import { checkForUpdates } from "./lib/updater";
 
 export default function App() {
   const theme = useStore((s) => s.theme);
@@ -31,6 +32,7 @@ export default function App() {
 
   useEffect(() => {
     useStore.getState().loadConnections().catch((e) => console.error("loadConnections", e));
+    const updates = import.meta.env.DEV ? undefined : setTimeout(() => void checkForUpdates(true), 5000);
 
     const onKey = (e: KeyboardEvent) => {
       const st = useStore.getState();
@@ -54,6 +56,7 @@ export default function App() {
     };
     window.addEventListener("contextmenu", onContext);
     return () => {
+      clearTimeout(updates);
       window.removeEventListener("keydown", onKey);
       window.removeEventListener("contextmenu", onContext);
     };
