@@ -13,6 +13,10 @@ export function cx(...parts: (string | false | null | undefined)[]) {
 
 type Variant = "primary" | "secondary" | "ghost" | "danger";
 
+export const isMac = /Mac/i.test(navigator.platform || navigator.userAgent);
+/** Modifier key label for shortcut hints. */
+export const MOD = isMac ? "⌘" : "Ctrl";
+
 export function Button({
   variant = "secondary",
   className,

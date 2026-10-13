@@ -1,0 +1,23 @@
+{
+  "app": {
+    "windows": [
+      {
+        "title": "DB Client",
+        "width": 1440,
+        "height": 900,
+        "minWidth": 1024,
+        "minHeight": 640,
+        "center": true,
+        "titleBarStyle": "Overlay",
+        "hiddenTitle": true,
+        "trafficLightPosition": { "x": 18, "y": 28 }
+      }
+    ]
+  },
+  "bundle": {
+    "macOS": {
+      "signingIdentity": "-",
+      "minimumSystemVersion": "11.0"
+    }
+  }
+}

@@ -31,7 +31,7 @@ import { gridViews } from "../lib/export";
 import { useStore, type MenuEntry } from "../store";
 import { CellEditor } from "./CellEditor";
 import { BulkSetDialog, ValueModal } from "./ValueModal";
-import { Button, cx, IconButton, Modal, Spinner } from "./ui";
+import { Button, cx, IconButton, Modal, Spinner, MOD } from "./ui";
 
 const ROW_H = 32;
 const GUTTER_W = 22;
@@ -440,8 +440,8 @@ export function DataGrid({ rs, connId, kind, tabId }: { rs: ResultSet; connId: s
       );
       if (anyNew) items.push({ label: "Set DEFAULT", onClick: () => setValues(cells.filter((x) => display[x.r]?.existing === null), undefined) });
     }
-    items.push("sep", { label: "Copy", icon: <ClipboardCopy />, hint: "Ctrl+C", onClick: copySelection });
-    if (editable) items.push({ label: "Paste", icon: <ClipboardPaste />, hint: "Ctrl+V", onClick: () => void paste() });
+    items.push("sep", { label: "Copy", icon: <ClipboardCopy />, hint: `${MOD}+C`, onClick: copySelection });
+    if (editable) items.push({ label: "Paste", icon: <ClipboardPaste />, hint: `${MOD}+V`, onClick: () => void paste() });
     if (editable) {
       items.push(
         "sep",
@@ -513,7 +513,7 @@ export function DataGrid({ rs, connId, kind, tabId }: { rs: ResultSet; connId: s
               <Button className="h-7" variant="ghost" onClick={() => setPending(emptyPending())}>
                 <RotateCcw size={13} /> Revert
               </Button>
-              <Button className="h-7" variant="primary" onClick={() => setSaveSql(buildDml(target as EditTarget, rs, pending))} title="Review and save (Ctrl+S)">
+              <Button className="h-7" variant="primary" onClick={() => setSaveSql(buildDml(target as EditTarget, rs, pending))} title={`Review and save (${MOD}+S)`}>
                 <Save size={13} /> Save
               </Button>
             </>

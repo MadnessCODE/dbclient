@@ -338,9 +338,16 @@ async function isArm() {
   }
 }
 
+const mac = /Mac/i.test(navigator.userAgentData?.platform || navigator.platform || navigator.userAgent);
+
 (async () => {
-  const arm = await isArm();
-  if (arm) {
+  const arm = !mac && (await isArm());
+  if (mac) {
+    $("#dl-mac").classList.replace("secondary", "primary");
+    $("#dl-x64").classList.replace("primary", "secondary");
+    $("#dl-mac").classList.add("rec");
+    $(".download-main .label").textContent = "Download for macOS";
+  } else if (arm) {
     $("#dl-arm").classList.replace("secondary", "primary");
     $("#dl-x64").classList.replace("primary", "secondary");
     $("#dl-arm").classList.add("rec");
@@ -353,9 +360,11 @@ async function isArm() {
     const asset = (re) => rel.assets.find((a) => re.test(a.name))?.browser_download_url;
     const x64 = asset(/_x64-setup\.exe$/);
     const a64 = asset(/_arm64-setup\.exe$/);
+    const dmg = asset(/\.dmg$/);
     if (x64) $("#dl-x64").href = x64;
     if (a64) $("#dl-arm").href = a64;
-    const main = arm ? a64 : x64;
+    if (dmg) $("#dl-mac").href = dmg;
+    const main = mac ? dmg : arm ? a64 : x64;
     if (main) $(".download-main").href = main;
     $$(".version").forEach((v) => (v.textContent = `${rel.tag_name} beta`));
   } catch {

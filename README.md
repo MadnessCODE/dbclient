@@ -11,7 +11,7 @@ Built with Rust and Tauri — small, native and quick to start.
 
 ![Status: beta](https://img.shields.io/badge/status-beta-orange)
 ![License: MIT](https://img.shields.io/badge/license-MIT-blue)
-![Platforms](https://img.shields.io/badge/platforms-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey)
+![Platforms](https://img.shields.io/badge/platforms-Windows%20%7C%20macOS-lightgrey)
 
 </div>
 
@@ -54,11 +54,16 @@ Built with Rust and Tauri — small, native and quick to start.
 
 ## Download
 
-**Windows:** download the installer from the [latest release](https://github.com/MadnessCODE/dbclient/releases/latest) and run it: `x64-setup.exe` for most PCs, `arm64-setup.exe` for Windows on ARM. It installs for the current user (no admin rights needed), and the app updates itself when a new version is out.
+Get the installer from the [latest release](https://github.com/MadnessCODE/dbclient/releases/latest) or the [website](https://madnesscode.github.io/dbclient/). The app updates itself when a new version is out.
 
-The installer isn't code-signed yet, so Windows SmartScreen may show a warning: click **More info** → **Run anyway**.
+- **Windows 10 / 11:** `x64-setup.exe` for most PCs, `arm64-setup.exe` for Windows on ARM. Installs for the current user, no admin rights needed.
+- **macOS 11+:** `universal.dmg` runs on Apple Silicon and Intel Macs.
 
-macOS and Linux builds are coming; until then, build from source (below).
+The installers aren't code-signed yet:
+- **Windows:** if SmartScreen shows a warning, click **More info** → **Run anyway**.
+- **macOS:** the first launch is blocked; go to **System Settings → Privacy & Security** and click **Open Anyway**.
+
+Linux builds are coming; until then, build from source (below).
 
 ## Build from source
 

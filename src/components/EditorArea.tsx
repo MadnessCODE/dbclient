@@ -27,7 +27,7 @@ import { monaco, setCompletionContext } from "../lib/monaco";
 import { api, errorText, kindLabel } from "../lib/api";
 import { statementAt } from "../lib/sql";
 import { useActiveTab, useStore, type EditorTab, type MenuEntry } from "../store";
-import { Button, cx, DbIcon, EnvBadge, IconButton, Spinner, StatusDot } from "./ui";
+import { Button, cx, DbIcon, EnvBadge, IconButton, Spinner, StatusDot, MOD } from "./ui";
 import { connColor, isProduction, tint } from "../lib/connStyle";
 
 type MonacoEditor = MonacoApi.editor.IStandaloneCodeEditor;
@@ -116,7 +116,7 @@ function tabMenu(tab: EditorTab, tabs: EditorTab[]): MenuEntry[] {
   const sameConn = tab.connId ? tabs.filter((t) => t.connId === tab.connId).map((t) => t.id) : [];
   const connName = st.connections.find((c) => c.id === tab.connId)?.name;
   return [
-    { label: "Close", icon: <X />, hint: "Ctrl+W", onClick: () => void closeTabs([tab.id]) },
+    { label: "Close", icon: <X />, hint: `${MOD}+W`, onClick: () => void closeTabs([tab.id]) },
     { label: "Close others", icon: <CopyX />, disabled: others.length === 0, onClick: () => void closeTabs(others) },
     { label: "Close tabs to the right", icon: <ArrowRightToLine />, disabled: right.length === 0, onClick: () => void closeTabs(right) },
     { label: "Close all", icon: <SquareX />, onClick: () => void closeTabs(tabs.map((t) => t.id)) },
@@ -180,7 +180,7 @@ function TabsBar({ tabs }: { tabs: EditorTab[] }) {
           </div>
         );
       })}
-      <IconButton title="New query (Ctrl+T)" className="mb-1.5" onClick={() => newTab()}>
+      <IconButton title={`New query (${MOD}+T)`} className="mb-1.5" onClick={() => newTab()}>
         <Plus size={18} />
       </IconButton>
     </div>
@@ -281,8 +281,8 @@ function Toolbar({ tab, editorRef }: { tab: EditorTab; editorRef: React.RefObjec
           </button>
           {runMenu && (
             <Menu onClose={() => setRunMenu(false)}>
-              <MenuItem label="Run current statement" shortcut="Ctrl+Enter" onClick={() => run("statement")} />
-              <MenuItem label="Run all" shortcut="Ctrl+Shift+Enter" onClick={() => void runTab(tab.id)} />
+              <MenuItem label="Run current statement" shortcut={`${MOD}+Enter`} onClick={() => run("statement")} />
+              <MenuItem label="Run all" shortcut={`${MOD}+Shift+Enter`} onClick={() => void runTab(tab.id)} />
             </Menu>
           )}
         </div>
@@ -296,7 +296,7 @@ function Toolbar({ tab, editorRef }: { tab: EditorTab; editorRef: React.RefObjec
       </Button>
 
       <div className="relative ml-auto flex items-center gap-1">
-        <IconButton title="Save (Ctrl+S)" onClick={() => void saveTab(tab)}>
+        <IconButton title={`Save (${MOD}+S)`} onClick={() => void saveTab(tab)}>
           <Save size={17} />
         </IconButton>
         <IconButton title="Save as..." onClick={() => void saveTab(tab, true)}>

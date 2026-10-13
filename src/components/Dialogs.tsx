@@ -3,7 +3,7 @@ import { Eye, History, Moon, Play, Settings, Sheet, Sun } from "lucide-react";
 import { kindLabel } from "../lib/api";
 import { quoteIdent } from "../lib/sql";
 import { useStore } from "../store";
-import { cx, DbIcon, Modal } from "./ui";
+import { cx, DbIcon, Modal, MOD } from "./ui";
 import { field } from "./ConnectionDialog";
 
 export { ConnectionDialog, PasswordDialog } from "./ConnectionDialog";
@@ -75,7 +75,7 @@ function Palette() {
       });
     }
     items.push(
-      { key: "a:new", icon: <Play size={15} className="text-muted" />, label: "New query", detail: "Ctrl+T", run: () => st.newTab() },
+      { key: "a:new", icon: <Play size={15} className="text-muted" />, label: "New query", detail: `${MOD}+T`, run: () => st.newTab() },
       { key: "a:theme", icon: st.theme === "dark" ? <Sun size={15} className="text-muted" /> : <Moon size={15} className="text-muted" />, label: "Toggle theme", run: st.toggleTheme },
       { key: "a:settings", icon: <Settings size={15} className="text-muted" />, label: "Settings", run: () => st.setUi({ settingsOpen: true }) },
     );
@@ -184,7 +184,7 @@ export function SettingsDialog() {
           <button className="mb-2 block text-accent hover:underline" onClick={() => setUi({ settingsOpen: false, aboutOpen: true })}>
             About DB Client · by MadnessCODE
           </button>
-          <b>Shortcuts:</b> Ctrl+Enter run statement · Ctrl+Shift+Enter / F5 run all · Ctrl+E explain · Shift+Alt+F format · Ctrl+S save · Ctrl+K search · Ctrl+T new tab · Ctrl+W close tab
+          <b>Shortcuts:</b> {MOD}+Enter run statement · {MOD}+Shift+Enter / F5 run all · {MOD}+E explain · Shift+Alt+F format · {MOD}+S save · {MOD}+K search · {MOD}+T new tab · {MOD}+W close tab
         </div>
       </div>
     </Modal>

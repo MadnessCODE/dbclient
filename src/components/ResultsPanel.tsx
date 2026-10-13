@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { History, CircleAlert, CircleCheck, TableProperties, Download, Info, ListTree, Maximize2, Minimize2, MessageSquare, Sheet, Square } from "lucide-react";
 import type { ResultSet } from "../lib/api";
 import { useActiveTab, useStore, type ResultTab, type TabRuntime } from "../store";
-import { Button, cx, IconButton, Spinner } from "./ui";
+import { Button, cx, IconButton, Spinner, MOD } from "./ui";
 import { StructurePanel } from "./StructurePanel";
 import { DataGrid } from "./DataGrid";
 import { HistoryView } from "./HistoryView";
@@ -83,7 +83,7 @@ export function ResultsPanel({ height }: { height?: number }) {
             </div>
           ) : (
             <div className="flex flex-1 items-center justify-center text-[13px] text-muted">
-              {rt?.running ? "Running…" : rs ? `${rs.rowsAffected.toLocaleString()} rows affected` : "Run a query to see results (Ctrl+Enter)"}
+              {rt?.running ? "Running…" : rs ? `${rs.rowsAffected.toLocaleString()} rows affected` : `Run a query to see results (${MOD}+Enter)`}
             </div>
           )}
         </>
@@ -101,7 +101,7 @@ export function ResultsPanel({ height }: { height?: number }) {
           ) : rt?.explain ? (
             <pre className="selectable font-mono text-[12.5px] leading-relaxed text-fg-2">{rt.explain}</pre>
           ) : (
-            <p className="text-muted">Click “Explain” (Ctrl+E) to see how the database will execute the current statement.</p>
+            <p className="text-muted">Click “Explain” ({MOD}+E) to see how the database will execute the current statement.</p>
           )}
         </div>
       )}

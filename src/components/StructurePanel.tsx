@@ -35,7 +35,7 @@ import {
 } from "../lib/alter";
 import { useStore, type EditorTab, type TableRef } from "../store";
 import { isProduction } from "../lib/connStyle";
-import { Button, cx, IconButton, Modal, Spinner } from "./ui";
+import { Button, cx, IconButton, Modal, Spinner, MOD } from "./ui";
 
 type Section = "columns" | "indexes" | "foreignKeys" | "ddl" | "info";
 
@@ -213,7 +213,7 @@ function StructureView({ connId, kind, target, schemaTree }: { connId: string; k
               <Button className="h-7" variant="ghost" onClick={() => setEdits(emptyEdits(st))}>
                 <RotateCcw size={14} /> Discard
               </Button>
-              <Button className="h-7" variant="primary" onClick={() => setPreview(buildAlter(kind, st, edits))} title="Review the SQL and save (Ctrl+S)">
+              <Button className="h-7" variant="primary" onClick={() => setPreview(buildAlter(kind, st, edits))} title={`Review the SQL and save (${MOD}+S)`}>
                 <Save size={14} /> Save
               </Button>
             </>

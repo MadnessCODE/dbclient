@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { Copy, Database, Minus, Moon, Search, Settings, Square, Sun, X } from "lucide-react";
 import { useStore } from "../store";
-import { cx, IconButton } from "./ui";
+import { cx, IconButton, isMac, MOD } from "./ui";
 
 // lazy so the UI also runs in a plain browser
 const isTauri = "__TAURI_INTERNALS__" in window;
@@ -22,7 +22,7 @@ export function TitleBar() {
   }, []);
 
   return (
-    <header data-tauri-drag-region className="flex h-14 shrink-0 items-center border-b border-line bg-panel pl-4">
+    <header data-tauri-drag-region className={cx("flex h-14 shrink-0 items-center border-b border-line bg-panel", isMac ? "pl-[84px]" : "pl-4")}>
       <div data-tauri-drag-region className="flex w-[300px] items-center gap-3">
         <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-accent-soft">
           <Database size={20} className="text-accent" />
@@ -40,11 +40,11 @@ export function TitleBar() {
         >
           <Search size={15} />
           <span className="flex-1 text-[13px]">Search tables, columns, SQL...</span>
-          <kbd className="rounded border border-line-strong px-1.5 py-0.5 font-sans text-[11px]">Ctrl + K</kbd>
+          <kbd className="rounded border border-line-strong px-1.5 py-0.5 font-sans text-[11px]">{MOD} + K</kbd>
         </button>
       </div>
 
-      <div className="flex items-center gap-2 pr-2">
+      <div className={cx("flex items-center gap-2", isMac ? "pr-4" : "pr-2")}>
         <IconButton title="Settings" onClick={() => setUi({ settingsOpen: true })}>
           <Settings size={17} />
         </IconButton>
@@ -58,17 +58,19 @@ export function TitleBar() {
         </div>
       </div>
 
-      <div className="flex h-full items-stretch">
-        <WindowButton title="Minimize" onClick={() => void appWindow().minimize()}>
-          <Minus size={16} />
-        </WindowButton>
-        <WindowButton title={maximized ? "Restore" : "Maximize"} onClick={() => void appWindow().toggleMaximize()}>
-          {maximized ? <Copy size={13} className="-scale-x-100" /> : <Square size={13} />}
-        </WindowButton>
-        <WindowButton title="Close" danger onClick={() => void appWindow().close()}>
-          <X size={17} />
-        </WindowButton>
-      </div>
+      {!isMac && (
+        <div className="flex h-full items-stretch">
+          <WindowButton title="Minimize" onClick={() => void appWindow().minimize()}>
+            <Minus size={16} />
+          </WindowButton>
+          <WindowButton title={maximized ? "Restore" : "Maximize"} onClick={() => void appWindow().toggleMaximize()}>
+            {maximized ? <Copy size={13} className="-scale-x-100" /> : <Square size={13} />}
+          </WindowButton>
+          <WindowButton title="Close" danger onClick={() => void appWindow().close()}>
+            <X size={17} />
+          </WindowButton>
+        </div>
+      )}
     </header>
   );
 }
