@@ -11,6 +11,9 @@ const host = process.env.TAURI_DEV_HOST;
 export default defineConfig(() => ({
   plugins: [react(), tailwindcss()],
 
+  // Older WebKit on macOS (the system WebView) needs lowered syntax.
+  build: { target: ["chrome105", "safari15"] },
+
   // Direct access to Monaco ESM files (for src/lib/monaco-lean.ts)
   resolve: {
     alias: { "monaco-esm": path.resolve("node_modules/monaco-editor/esm/vs") },

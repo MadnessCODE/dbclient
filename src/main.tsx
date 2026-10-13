@@ -37,3 +37,5 @@ ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
     </ErrorBoundary>
   </React.StrictMode>,
 );
+// Tells the boot check in index.html that the bundle loaded.
+(window as unknown as { __dbcBooted: boolean }).__dbcBooted = true;

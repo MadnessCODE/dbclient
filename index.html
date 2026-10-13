@@ -4,6 +4,33 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>DB Client</title>
+    <style>
+      html { background: #070d1a; }
+      html.light { background: #eef2f8; }
+      #boot-error { position: fixed; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 14px; padding: 32px; background: #070d1a; color: #e3e9f4; font: 14px/1.5 system-ui, sans-serif; text-align: center; }
+      #boot-error pre { max-width: 760px; max-height: 40vh; overflow: auto; margin: 0; padding: 14px; border-radius: 8px; background: #0e1830; color: #b4c0d6; font: 12px/1.5 ui-monospace, monospace; text-align: left; white-space: pre-wrap; user-select: text; }
+      #boot-error button { padding: 8px 16px; border: 0; border-radius: 6px; background: #2f6fed; color: #fff; font: inherit; cursor: pointer; }
+    </style>
+    <script>
+      // If the app bundle fails to load (e.g. an outdated system WebView), show why instead of a blank window.
+      (function () {
+        var errors = [];
+        window.addEventListener("error", function (e) { errors.push((e.message || "Error") + (e.filename ? " (" + e.filename.split("/").pop() + ":" + e.lineno + ")" : "")); }, true);
+        window.addEventListener("unhandledrejection", function (e) { errors.push(String(e.reason && (e.reason.stack || e.reason))); });
+        setTimeout(function () {
+          if (window.__dbcBooted) return;
+          var info = (errors.length ? errors.join("\n") : "The app didn't start (no error reported).") + "\n\n" + navigator.userAgent;
+          var box = document.createElement("div");
+          box.id = "boot-error";
+          box.innerHTML = "<h2 style='margin:0;font-size:18px'>DB Client couldn't start</h2>" +
+            "<p style='margin:0;max-width:560px;color:#b4c0d6'>On macOS this usually means the system WebView is too old: update macOS or Safari (16.4 or newer). Please send the details below with a bug report.</p>" +
+            "<pre></pre><button>Copy details</button>";
+          box.querySelector("pre").textContent = info;
+          box.querySelector("button").onclick = function () { try { navigator.clipboard.writeText(info); this.textContent = "Copied"; } catch (_) {} };
+          document.body.appendChild(box);
+        }, 6000);
+      })();
+    </script>
   </head>
 
   <body>
