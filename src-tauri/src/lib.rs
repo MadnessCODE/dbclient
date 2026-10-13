@@ -1,6 +1,7 @@
 mod db;
 mod dump;
 mod er;
+mod export;
 mod error;
 mod import;
 mod projects;
@@ -376,6 +377,23 @@ async fn import_table_file(
 }
 
 #[tauri::command]
+async fn export_database(
+    app: tauri::AppHandle,
+    pools: State<'_, Pools>,
+    imports: State<'_, import::Imports>,
+    conn_id: String,
+    job_id: String,
+    options: export::ExportOptions,
+) -> AppResult<import::ImportSummary> {
+    use tauri::Emitter;
+    let pool = pools.get(&conn_id)?;
+    let emit: import::OnProgress = Arc::new(move |p| {
+        let _ = app.emit("import-progress", p);
+    });
+    export::run(emit, &imports, &pool, job_id, options).await
+}
+
+#[tauri::command]
 fn cancel_import(imports: State<'_, import::Imports>, job_id: String) -> bool {
     imports.cancel(&job_id)
 }
@@ -438,6 +456,7 @@ pub fn run() {
             cancel_import,
             preview_table_file,
             import_table_file,
+            export_database,
             inspect_dump,
             read_text_file,
         ])

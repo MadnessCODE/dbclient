@@ -49,6 +49,19 @@ export interface ConnectionInput extends ConnectionConfig {
   sshSecret: string | null;
 }
 
+export interface ExportOptions {
+  /** PostgreSQL schemas, or the MySQL database */
+  schemas: string[];
+  path: string;
+  structure: boolean;
+  data: boolean;
+  dropExisting: boolean;
+  workers: number;
+  gzip: boolean;
+  /** MySQL: short global read lock so every connection sees the same data */
+  consistent: boolean;
+}
+
 export interface DatabaseInfo {
   name: string;
   /** null without the CONNECT privilege */
@@ -212,6 +225,7 @@ export const api = {
   inspectDump: (path: string) => invoke<DumpInfo>("inspect_dump", { path }),
   importDump: (connId: string, jobId: string, options: ImportOptions) => invoke<ImportSummary>("import_dump", { connId, jobId, options }),
   cancelImport: (jobId: string) => invoke<boolean>("cancel_import", { jobId }),
+  exportDatabase: (connId: string, jobId: string, options: ExportOptions) => invoke<ImportSummary>("export_database", { connId, jobId, options }),
   previewTableFile: (options: SourceOptions) => invoke<SourcePreview>("preview_table_file", { options }),
   importTableFile: (connId: string, jobId: string, options: TableImportOptions) => invoke<ImportSummary>("import_table_file", { connId, jobId, options }),
 };

@@ -18,7 +18,9 @@ export function RunView({
   error,
   running,
   workers,
+  mode = "import",
 }: {
+  mode?: "import" | "export";
   fileSize: number;
   progress: ImportProgress | null;
   summary: ImportSummary | null;
@@ -39,15 +41,16 @@ export function RunView({
   const statements = summary?.statements ?? p?.statements ?? 0;
   const errorCount = summary?.errorCount ?? p?.errorCount ?? 0;
 
+  const Verb = mode === "export" ? "Export" : "Import";
   const status = error
-    ? { icon: <OctagonX size={22} className="text-err" />, title: "Import failed", tone: "text-err" }
+    ? { icon: <OctagonX size={22} className="text-err" />, title: `${Verb} failed`, tone: "text-err" }
     : summary?.cancelled
-      ? { icon: <Square size={20} className="text-warn" />, title: "Import stopped", tone: "text-warn" }
+      ? { icon: <Square size={20} className="text-warn" />, title: `${Verb} stopped`, tone: "text-warn" }
       : summary?.failed
         ? { icon: <CircleAlert size={22} className="text-err" />, title: "Stopped at an error", tone: "text-err" }
         : summary
-          ? { icon: <CircleCheck size={22} className="text-ok" />, title: errorCount ? `Done with ${errorCount} skipped statement${errorCount > 1 ? "s" : ""}` : "Import finished", tone: "text-ok" }
-          : { icon: <Spinner size={20} />, title: "Importing…", tone: "text-fg" };
+          ? { icon: <CircleCheck size={22} className="text-ok" />, title: errorCount ? `Done with ${errorCount} skipped statement${errorCount > 1 ? "s" : ""}` : `${Verb} finished`, tone: "text-ok" }
+          : { icon: <Spinner size={20} />, title: mode === "export" ? "Exporting…" : "Importing…", tone: "text-fg" };
 
   return (
     <div className="flex flex-col gap-4">
@@ -56,7 +59,7 @@ export function RunView({
         <div className="min-w-0 flex-1">
           <div className={cx("text-[16px] font-semibold", status.tone)}>{status.title}</div>
           <div className="truncate text-[12.5px] text-muted">
-            {running ? (p?.table ? `Working on ${p.table}` : "Reading the file…") : summary ? `${fmtSecs(secs)} total` : error}
+            {running ? (p?.table ? (p.table.endsWith("…") ? p.table : `Working on ${p.table}`) : mode === "export" ? "Reading the structure…" : "Reading the file…") : summary ? `${fmtSecs(secs)} total` : error}
           </div>
         </div>
         <div className="text-right font-mono text-[22px] font-semibold tabular-nums text-fg">{Math.floor(pct)}%</div>
@@ -75,7 +78,7 @@ export function RunView({
         <Stat label="Speed" value={speed > 0 ? (rowsUnit ? `${Math.round(speed).toLocaleString()} rows/s` : `${formatBytes(speed)}/s`) : "—"} />
         <Stat label="Time left" value={running ? (eta > 0 ? `~${fmtSecs(eta)}` : "—") : "—"} />
         <Stat label="Rows" value={rows.toLocaleString()} />
-        <Stat label="Statements" value={statements.toLocaleString()} />
+        <Stat label={mode === "export" ? "Tables done" : "Statements"} value={statements.toLocaleString()} />
       </div>
 
       {p && p.workers.length > 0 && <Lanes workers={p.workers} running={running} total={workers} />}

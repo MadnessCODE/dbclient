@@ -7,6 +7,12 @@ without a section won't build.
 ## 0.1.3
 
 ### New
+- **Export a whole database or schema** into one `.sql` or `.sql.gz` file: right-click a
+  database or schema → *Export…*. Structure and data, structure only or data only, optional
+  DROP statements. Tables are read over several connections at once (big ones in key ranges),
+  all from the same moment of the database, and compressed in parallel: about 4–5× faster
+  than `pg_dump` and `mysqldump` on a 350 MB test database. The file loads with our Import,
+  `psql` or `mysql`, and runs in the background like imports.
 - **ER diagrams.** Right-click a schema (or a MySQL database) → *ER diagram…* to see its tables,
   views and relationships: drag tables around, zoom, search, click a table for its columns, keys
   and indexes, or switch to *Documentation*. **Export HTML** saves everything as one file that

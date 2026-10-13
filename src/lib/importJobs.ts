@@ -8,7 +8,7 @@ import { useStore } from "../store";
 
 export interface ImportJob {
   id: string;
-  kind: "dump" | "table";
+  kind: "dump" | "table" | "export";
   title: string;
   /** "connection / db.table" */
   target: string;
@@ -85,7 +85,7 @@ export async function startImport(meta: Omit<ImportJob, "id" | "startedAt" | "se
   } finally {
     unlisten();
   }
-  void useStore.getState().refreshSchema(meta.connId);
+  if (meta.kind !== "export") void useStore.getState().refreshSchema(meta.connId);
   announce(id);
 }
 
@@ -109,6 +109,12 @@ function announce(id: string) {
 export function outcome(j: ImportJob): { tone: Toast["tone"]; title: string; body: string } {
   const s = j.summary;
   const secs = s ? `${(s.elapsedMs / 1000).toFixed(1)} s` : "";
+  if (j.kind === "export") {
+    if (j.error || s?.failed) return { tone: "error", title: `Export failed: ${j.title}`, body: j.error ?? s?.errors[0]?.message ?? "" };
+    if (!s) return { tone: "warn", title: j.title, body: "" };
+    if (s.cancelled) return { tone: "warn", title: `Export stopped: ${j.title}`, body: "The unfinished file was removed." };
+    return { tone: "ok", title: `Export finished: ${j.title}`, body: `${s.rows.toLocaleString()} rows to ${j.target} in ${secs}.` };
+  }
   if (j.error) return { tone: "error", title: `Import failed: ${j.title}`, body: j.error };
   if (!s) return { tone: "warn", title: j.title, body: "" };
   if (s.cancelled) return { tone: "warn", title: `Import stopped: ${j.title}`, body: `${s.rows.toLocaleString()} rows were imported before it stopped.` };

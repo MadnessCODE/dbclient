@@ -1,7 +1,7 @@
 // Background imports: progress dialog, Tasks rail button and completion toasts.
 import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { CircleAlert, CircleCheck, FileUp, ListChecks, Minimize2, Square, TriangleAlert, X } from "lucide-react";
+import { CircleAlert, CircleCheck, FileDown, FileUp, ListChecks, Minimize2, Square, TriangleAlert, X } from "lucide-react";
 import { api } from "../lib/api";
 import { isDone, isRunning, jobPercent, outcome, useImports, type ImportJob } from "../lib/importJobs";
 import { useUpdater } from "../lib/updater";
@@ -19,18 +19,18 @@ export function ImportJobDialog() {
   const hide = () => show(null);
 
   return (
-    <Modal title="Import" onClose={hide} width={job.kind === "table" ? 880 : 760}>
+    <Modal title={job.kind === "export" ? "Export" : "Import"} onClose={hide} width={job.kind === "table" ? 880 : 760}>
       <div className="flex items-center gap-2 border-b border-line px-5 py-2.5 text-[12.5px] text-fg-2">
-        <FileUp size={14} className="shrink-0 text-accent" />
+        {job.kind === "export" ? <FileDown size={14} className="shrink-0 text-accent" /> : <FileUp size={14} className="shrink-0 text-accent" />}
         <span className="truncate font-medium text-fg">{job.title}</span>
         <span className="text-muted">→</span>
         <span className="truncate">{job.target}</span>
       </div>
       <div className="h-[460px] overflow-y-auto px-5 py-4">
-        <RunView fileSize={job.fileSize} progress={job.progress ?? null} summary={job.summary ?? null} error={job.error ?? null} running={running} workers={job.workers} />
+        <RunView mode={job.kind === "export" ? "export" : "import"} fileSize={job.fileSize} progress={job.progress ?? null} summary={job.summary ?? null} error={job.error ?? null} running={running} workers={job.workers} />
       </div>
       <footer className="flex items-center gap-2 border-t border-line px-5 py-3">
-        <span className="text-[12px] text-muted">{running ? "You can keep working — the import runs in the background." : ""}</span>
+        <span className="text-[12px] text-muted">{running ? `You can keep working — the ${job.kind === "export" ? "export" : "import"} runs in the background.` : ""}</span>
         <div className="ml-auto flex gap-2">
           {running ? (
             <>
@@ -38,7 +38,7 @@ export function ImportJobDialog() {
                 <Minimize2 size={14} /> Run in background
               </Button>
               <Button variant="danger" onClick={() => void api.cancelImport(job.id)}>
-                <Square size={12} fill="currentColor" /> Stop import
+                <Square size={12} fill="currentColor" /> Stop {job.kind === "export" ? "export" : "import"}
               </Button>
             </>
           ) : (
@@ -159,7 +159,7 @@ function TasksPanel({ anchor, onClose }: { anchor: HTMLElement; onClose: () => v
         <div className="px-4 py-8 text-center text-[12.5px] leading-relaxed text-muted">
           No background tasks.
           <br />
-          Imports run here, so you can keep working while they finish.
+          Imports and exports run here, so you can keep working while they finish.
         </div>
       ) : (
         <div className="min-h-0 overflow-y-auto p-1.5">
@@ -219,7 +219,7 @@ function TaskRow({ job: j, onOpen, onDismiss }: { job: ImportJob; onOpen: () => 
         <span className={cx("mt-1 block text-[11.5px] tabular-nums", tone === "error" ? "text-err" : "text-fg-2")}>{status}</span>
       </button>
       {!done ? (
-        <button title="Stop import" onClick={() => void api.cancelImport(j.id)} className="rounded p-1 text-muted hover:bg-err/15 hover:text-err">
+        <button title={j.kind === "export" ? "Stop export" : "Stop import"} onClick={() => void api.cancelImport(j.id)} className="rounded p-1 text-muted hover:bg-err/15 hover:text-err">
           <Square size={12} fill="currentColor" />
         </button>
       ) : (

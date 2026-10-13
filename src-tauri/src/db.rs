@@ -173,7 +173,7 @@ fn first_row(rows: Vec<Vec<Cell>>) -> AppResult<Vec<Cell>> {
 }
 
 
-fn pg_cell(row: &PgRow, i: usize) -> Cell {
+pub(crate) fn pg_cell(row: &PgRow, i: usize) -> Cell {
     let value = row.try_get_raw(i).ok()?;
     if value.is_null() {
         return None;
@@ -192,7 +192,7 @@ fn pg_cell(row: &PgRow, i: usize) -> Cell {
     }
 }
 
-fn my_cell(row: &MySqlRow, i: usize) -> Cell {
+pub(crate) fn my_cell(row: &MySqlRow, i: usize) -> Cell {
     let value = row.try_get_raw(i).ok()?;
     if value.is_null() {
         return None;

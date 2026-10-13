@@ -46,6 +46,7 @@ Built with Rust and Tauri — small, native and quick to start.
 **Import & export**
 - Export to CSV, Excel (real .xlsx), JSON and SQL INSERT — including all rows from the database, not just the loaded page
 - Import SQL dumps (mysqldump, pg_dump plain, `.sql.gz`) **in parallel** over several connections
+- Export a whole database or schema to `.sql` / `.sql.gz` **in parallel** from one consistent snapshot — about 4–5× faster than pg_dump / mysqldump
 - Import CSV, Excel and JSON into a new or existing table, with type detection and column mapping
 - Long jobs run in the background with progress, notifications and a task list
 

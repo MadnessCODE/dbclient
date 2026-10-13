@@ -4,6 +4,7 @@ import {
   Code,
   Copy,
   Database,
+  DatabaseBackup,
   Eraser,
   FileCode,
   FileSpreadsheet,
@@ -245,6 +246,7 @@ export function schemaMenu(cfg: ConnectionConfig, schema: string): MenuEntry[] {
     "sep",
     { label: "ER diagram…", icon: <Network />, onClick: () => st().setUi({ erDialog: { connId: cfg.id, schema } }) },
     { label: `Import into ${schema}…`, icon: <FileUp />, onClick: () => st().setUi({ importDialog: { connId: cfg.id, database: schema } }) },
+    { label: `Export ${word}…`, icon: <DatabaseBackup />, onClick: () => st().setUi({ dbExport: { connId: cfg.id, schema } }) },
     "sep",
     { label: "Copy name", icon: <Copy />, onClick: () => copy(schema) },
     { label: "Refresh", icon: <RefreshCw />, onClick: () => void st().refreshSchema(cfg.id) },
@@ -333,6 +335,7 @@ export function databaseMenu(cfg: ConnectionConfig): MenuEntry[] {
     { label: "Create schema…", icon: <Database />, disabled: !connected, onClick: () => createSchema(cfg) },
     "sep",
     { label: `Import into ${db}…`, icon: <FileUp />, disabled: !connected, onClick: () => st().setUi({ importDialog: { connId: cfg.id } }) },
+    { label: "Export database…", icon: <DatabaseBackup />, onClick: () => st().setUi({ dbExport: { connId: cfg.id } }) },
     { label: "Users & privileges…", icon: <UserCog />, disabled: !connected, onClick: () => st().setUi({ usersDialog: { connId: cfg.id } }) },
     "sep",
     { label: "Copy name", icon: <Copy />, onClick: () => copy(db) },
@@ -381,6 +384,9 @@ export function connectionMenu(cfg: ConnectionConfig): MenuEntry[] {
         : { label: `Create ${cfg.kind === "mysql" ? "database" : "schema"}…`, icon: <Database />, onClick: () => createSchema(cfg) }
       : "sep",
     { label: "Import…", icon: <FileUp />, disabled: !connected, onClick: () => st().setUi({ importDialog: { connId: cfg.id } }) },
+    ...(cfg.kind === "postgres" && !isMultiDb(cfg)
+      ? [{ label: "Export database…", icon: <DatabaseBackup />, disabled: !connected, onClick: () => st().setUi({ dbExport: { connId: cfg.id } }) } as MenuEntry]
+      : []),
     { label: "Users & privileges…", icon: <UserCog />, disabled: !connected, onClick: () => st().setUi({ usersDialog: { connId: cfg.id } }) },
     "sep",
     { label: "Edit…", icon: <Pencil />, onClick: () => st().setUi({ connDialog: { open: true, editing: cfg } }) },
