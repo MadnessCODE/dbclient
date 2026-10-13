@@ -354,7 +354,7 @@ const mac = /Mac/i.test(navigator.userAgentData?.platform || navigator.platform 
     $(".download-main .label").textContent = "Download for Windows (ARM64)";
   }
   try {
-    const r = await fetch(`https://api.github.com/repos/${REPO}/releases/latest`);
+    const r = await fetch(`https://api.github.com/repos/${REPO}/releases/latest`, { cache: "no-cache" });
     if (!r.ok) return;
     const rel = await r.json();
     const asset = (re) => rel.assets.find((a) => re.test(a.name))?.browser_download_url;
