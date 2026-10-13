@@ -7,6 +7,8 @@
 **A fast, modern desktop client for PostgreSQL and MySQL.**
 Built with Rust and Tauri — small, native and quick to start.
 
+[Website](https://madnesscode.github.io/dbclient/) · [Download](https://github.com/MadnessCODE/dbclient/releases/latest)
+
 ![Status: beta](https://img.shields.io/badge/status-beta-orange)
 ![License: MIT](https://img.shields.io/badge/license-MIT-blue)
 ![Platforms](https://img.shields.io/badge/platforms-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey)

@@ -1,0 +1,219 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>DB Client · PostgreSQL & MySQL desktop client</title>
+    <meta name="description" content="Fast, open source desktop client for PostgreSQL and MySQL. SQL editor, editable grid, SSH tunnels, parallel import and export, users and a live process monitor." />
+    <meta property="og:title" content="DB Client" />
+    <meta property="og:description" content="Fast, open source desktop client for PostgreSQL and MySQL." />
+    <meta property="og:type" content="website" />
+    <meta name="theme-color" content="#070d1a" />
+    <link rel="icon" href="icon.svg" type="image/svg+xml" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+    <link rel="stylesheet" href="style.css" />
+  </head>
+  <body>
+    <div class="bg" aria-hidden="true">
+      <div class="blob b1"></div>
+      <div class="blob b2"></div>
+      <div class="blob b3"></div>
+      <div class="grid-lines"></div>
+    </div>
+
+    <header class="nav">
+      <a class="brand" href="#top"><img src="icon.svg" alt="" width="28" height="28" /> DB Client <span class="beta">BETA</span></a>
+      <nav>
+        <a href="#features">Features</a>
+        <a href="#speed">Speed</a>
+        <a href="#download">Download</a>
+        <a class="gh" href="https://github.com/MadnessCODE/dbclient" target="_blank" rel="noopener">
+          <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor" aria-hidden="true"><path d="M12 .3a12 12 0 0 0-3.8 23.38c.6.12.83-.26.83-.57L9 21.07c-3.34.72-4.04-1.61-4.04-1.61-.55-1.39-1.34-1.76-1.34-1.76-1.08-.74.09-.73.09-.73 1.2.09 1.84 1.24 1.84 1.24 1.07 1.83 2.81 1.3 3.5 1 .1-.78.42-1.31.76-1.61-2.67-.3-5.47-1.33-5.47-5.93 0-1.31.47-2.38 1.24-3.22-.14-.3-.54-1.52.1-3.18 0 0 1-.32 3.3 1.23a11.5 11.5 0 0 1 6 0c2.28-1.55 3.29-1.23 3.29-1.23.64 1.66.24 2.88.12 3.18a4.65 4.65 0 0 1 1.23 3.22c0 4.61-2.8 5.63-5.48 5.92.42.36.81 1.1.81 2.22l-.01 3.29c0 .32.21.69.82.57A12 12 0 0 0 12 .3" /></svg>
+          GitHub
+        </a>
+      </nav>
+    </header>
+
+    <main id="top">
+      <section class="hero">
+        <div class="floating" aria-hidden="true"></div>
+        <p class="pill reveal"><span class="dot"></span> Open source · Free · Built with Rust + Tauri</p>
+        <h1 class="reveal">Your databases,<br /><span class="grad">one click away.</span></h1>
+        <p class="lead reveal">A fast, native desktop client for <b class="pg">PostgreSQL</b> and <b class="my">MySQL</b>. Query, edit, import and keep an eye on your servers without the clutter.</p>
+        <div class="cta reveal">
+          <a class="btn primary download-main" href="https://github.com/MadnessCODE/dbclient/releases/latest">
+            <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v12m0 0-5-5m5 5 5-5M4 19h16" /></svg>
+            <span class="label">Download for Windows</span>
+          </a>
+          <a class="btn ghost" href="https://github.com/MadnessCODE/dbclient" target="_blank" rel="noopener">View source</a>
+        </div>
+        <p class="meta reveal"><span class="version">Beta</span> · Windows 10 / 11 · x64 & ARM64 · ~5 MB · auto-updates</p>
+
+        <!-- Animated app mockup -->
+        <div class="stage reveal">
+          <div class="scenes" role="tablist" aria-label="Demo">
+            <button role="tab" data-scene="query" class="on">Query & edit</button>
+            <button role="tab" data-scene="import">Parallel import</button>
+            <button role="tab" data-scene="procs">Processes</button>
+          </div>
+          <div class="frame-wrap">
+            <div class="frame" id="app">
+              <div class="t-bar">
+                <div class="t-left"><img src="icon.svg" alt="" width="22" height="22" /><div><b>DB Client</b><small>Connect • Query • Explore</small></div></div>
+                <div class="t-search"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7" /><path d="m20 20-3.5-3.5" /></svg>Search tables, columns, SQL…<kbd>Ctrl + K</kbd></div>
+                <div class="t-win"><i></i><i></i><i></i></div>
+              </div>
+              <div class="t-body">
+                <aside class="rail">
+                  <span class="ri" title="Home"><svg viewBox="0 0 24 24"><path d="M3 11 12 4l9 7v9H3z" /></svg></span>
+                  <span class="ri on" data-for="query" title="Query"><svg viewBox="0 0 24 24"><path d="M7 4v16l13-8z" /></svg></span>
+                  <span class="ri" title="Files"><svg viewBox="0 0 24 24"><path d="M6 3h8l4 4v14H6z" /></svg></span>
+                  <span class="ri tasks" data-for="import" title="Tasks"><svg viewBox="0 0 24 24"><path d="M4 6h3M4 12h3M4 18h3M10 6h10M10 12h10M10 18h10" /></svg><em class="badge">1</em></span>
+                  <span class="ri" data-for="procs" title="Processes"><svg viewBox="0 0 24 24"><path d="M3 12h4l3-8 4 16 3-8h4" /></svg></span>
+                  <span class="ri" title="Settings"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3" /><path d="M12 2v3M12 19v3M2 12h3M19 12h3M5 5l2 2M17 17l2 2M5 19l2-2M17 7l2-2" /></svg></span>
+                </aside>
+
+                <!-- Scene: query -->
+                <div class="scene" data-scene="query">
+                  <aside class="tree">
+                    <div class="tree-h">Connections</div>
+                    <div class="conn"><span class="db pg"></span>shop <em class="env prod">PROD</em></div>
+                    <div class="node l1 open">public</div>
+                    <div class="node l2 open">Tables <small>4</small></div>
+                    <div class="node l3 tbl hl">customers <small>12k</small></div>
+                    <div class="node l3 tbl">orders <small>480k</small></div>
+                    <div class="node l3 tbl">order_items <small>1.9M</small></div>
+                    <div class="node l3 tbl">products <small>2.4k</small></div>
+                    <div class="node l2">Views <small>2</small></div>
+                    <div class="node l2">Functions <small>6</small></div>
+                    <div class="node l1">Roles <small>5</small></div>
+                    <div class="conn dim"><span class="db my"></span>analytics <em class="env dev">DEV</em></div>
+                    <div class="conn dim"><span class="db pg"></span>staging <em class="env stg">STAGING</em></div>
+                  </aside>
+                  <section class="work">
+                    <div class="tabs"><span class="tab on">top_customers.sql</span><span class="tab">orders.sql</span><span class="tab add">+</span></div>
+                    <div class="toolbar">
+                      <span class="run">▶ Run</span><span class="tb">Explain</span><span class="tb">Format</span>
+                      <span class="conn-chip"><span class="db pg sm"></span>shop / public</span>
+                    </div>
+                    <pre class="editor"><code id="sql"></code><span class="caret"></span></pre>
+                    <div class="results">
+                      <div class="r-head"><span class="r-tab on">Results</span><span class="r-tab">Structure</span><span class="r-tab">History</span><span class="r-info" id="rinfo"></span></div>
+                      <div class="grid" id="grid"></div>
+                      <div class="r-foot"><span class="pending" id="pending"></span><span class="save" id="save">Save changes</span></div>
+                    </div>
+                  </section>
+                </div>
+
+                <!-- Scene: import -->
+                <div class="scene" data-scene="import" hidden>
+                  <aside class="tree clone"></aside>
+                  <div class="backdrop">
+                  <div class="wizard">
+                    <div class="w-head">
+                      <b>Import</b><span>shop_2026-10.sql.gz → shop</span>
+                      <ol class="steps"><li class="done">File</li><li class="done">Options</li><li class="on">Import</li></ol>
+                    </div>
+                    <div class="w-stats">
+                      <div><small>Progress</small><b id="ipct">0%</b></div>
+                      <div><small>Rows</small><b id="irows">0</b></div>
+                      <div><small>Speed</small><b id="ispeed">–</b></div>
+                      <div><small>Elapsed</small><b id="itime">0.0 s</b></div>
+                    </div>
+                    <div class="bar"><i id="ibar"></i></div>
+                    <div class="lanes" id="lanes"></div>
+                    <div class="w-foot"><span id="istatus">Splitting the dump and loading tables in parallel…</span><span class="btn-sm">Run in background</span></div>
+                  </div>
+                  </div>
+                </div>
+
+                <!-- Scene: processes -->
+                <div class="scene" data-scene="procs" hidden>
+                  <div class="procs">
+                    <div class="p-head">
+                      <b>Processes</b>
+                      <span class="conn-chip"><span class="db pg sm"></span>shop <em class="env prod">PROD</em> ▾</span>
+                      <span class="live"><i></i>Live</span>
+                    </div>
+                    <div class="p-cards">
+                      <div><small>Connections</small><b>24</b></div>
+                      <div><small>Active</small><b class="ok" id="pactive">3</b></div>
+                      <div><small>Waiting on locks</small><b class="warn">1</b></div>
+                      <div><small>Longest query</small><b id="plong">41 s</b></div>
+                    </div>
+                    <div class="p-table" id="ptable"></div>
+                    <div class="locks" id="locks"></div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section id="features" class="section">
+        <h2 class="reveal">Everything you reach for, <span class="grad">nothing you don't</span></h2>
+        <p class="sub reveal">Built for the daily work with real databases: from a quick SELECT to a 300 MB dump on a production server.</p>
+        <div class="cards">
+          <article class="card reveal"><i class="ic" data-i="zap"></i><h3>Native speed</h3><p>Rust core, streams tens of thousands of rows in milliseconds. Starts instantly, about 5 MB to download.</p></article>
+          <article class="card reveal"><i class="ic" data-i="code"></i><h3>SQL editor</h3><p>Monaco editor with autocomplete for tables, columns and aliases. Run a statement, a selection or the whole script.</p></article>
+          <article class="card reveal"><i class="ic" data-i="grid"></i><h3>Editable grid</h3><p>Excel-like selection, typed cells, JSON viewer, date pickers. Edits are saved in a single transaction.</p></article>
+          <article class="card reveal"><i class="ic" data-i="key"></i><h3>SSH tunnels</h3><p>Reach private databases through a bastion. Host keys are pinned and passwords live in the OS keychain.</p></article>
+          <article class="card reveal"><i class="ic" data-i="shield"></i><h3>Production guard</h3><p>Mark connections as PROD and every write asks for confirmation first. Colored everywhere so you always know where you are.</p></article>
+          <article class="card reveal"><i class="ic" data-i="arrows"></i><h3>Parallel import & export</h3><p>SQL dumps, CSV, Excel and JSON. Dumps are split and loaded over several connections, in the background.</p></article>
+          <article class="card reveal"><i class="ic" data-i="table"></i><h3>Structure editor</h3><p>Columns, indexes and foreign keys with an ALTER preview before anything touches the server.</p></article>
+          <article class="card reveal"><i class="ic" data-i="users"></i><h3>Users & privileges</h3><p>Create users and roles, grant access to a database, a schema or a single view. See the SQL before applying.</p></article>
+          <article class="card reveal"><i class="ic" data-i="activity"></i><h3>Process monitor</h3><p>Live sessions and running queries, lock waits and who blocks whom. Cancel a query or kill a connection.</p></article>
+        </div>
+      </section>
+
+      <section id="speed" class="section">
+        <h2 class="reveal">Faster than the <span class="grad">command line</span></h2>
+        <p class="sub reveal">Importing a 300 MB SQL dump (2.9 million rows). DB Client splits it and loads tables over 4 connections.</p>
+        <div class="bench reveal" id="bench">
+          <div class="b-group">
+            <div class="b-title"><span class="db pg"></span>PostgreSQL</div>
+            <div class="b-row"><span>psql</span><div class="b-track"><i data-v="4.7" data-max="20.1" class="slow"></i></div><b>4.7 s</b><span></span></div>
+            <div class="b-row"><span>DB Client</span><div class="b-track"><i data-v="2.0" data-max="20.1"></i></div><b>2.0 s</b><em class="x">2.4× faster</em></div>
+          </div>
+          <div class="b-group">
+            <div class="b-title"><span class="db my"></span>MySQL</div>
+            <div class="b-row"><span>mysql CLI</span><div class="b-track"><i data-v="20.1" data-max="20.1" class="slow"></i></div><b>20.1 s</b><span></span></div>
+            <div class="b-row"><span>DB Client</span><div class="b-track"><i data-v="8.2" data-max="20.1"></i></div><b>8.2 s</b><em class="x">2.5× faster</em></div>
+          </div>
+          <p class="b-note">Local test, same machine and server for both. CSV with 1 million rows: 0.63 s into PostgreSQL.</p>
+        </div>
+      </section>
+
+      <section id="download" class="section">
+        <div class="dl reveal">
+          <img src="icon.svg" alt="" width="72" height="72" class="dl-icon" />
+          <h2>Get DB Client</h2>
+          <p class="sub">Free and open source (MIT). Installs for your user only, no admin rights needed, and updates itself.</p>
+          <div class="dl-buttons">
+            <a class="btn primary" id="dl-x64" href="https://github.com/MadnessCODE/dbclient/releases/latest">
+              <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor" aria-hidden="true"><path d="M3 5.5 10 4.5v7H3zM11 4.4 21 3v8.5H11zM3 12.5h7v7l-7-1zM11 12.5h10V21l-10-1.4z" /></svg>
+              Windows x64
+            </a>
+            <a class="btn secondary" id="dl-arm" href="https://github.com/MadnessCODE/dbclient/releases/latest">
+              <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor" aria-hidden="true"><path d="M3 5.5 10 4.5v7H3zM11 4.4 21 3v8.5H11zM3 12.5h7v7l-7-1zM11 12.5h10V21l-10-1.4z" /></svg>
+              Windows ARM64
+            </a>
+          </div>
+          <p class="dl-meta"><span class="version">Beta</span> · <a href="https://github.com/MadnessCODE/dbclient/releases" target="_blank" rel="noopener">All releases</a></p>
+          <p class="note">The installer isn't code-signed yet, so Windows SmartScreen may warn on first run: click <b>More info</b> → <b>Run anyway</b>.</p>
+          <p class="note">macOS and Linux builds are coming. Until then you can <a href="https://github.com/MadnessCODE/dbclient#build-from-source" target="_blank" rel="noopener">build from source</a>.</p>
+        </div>
+      </section>
+    </main>
+
+    <footer>
+      <span>© 2026 MadnessCODE · MIT License</span>
+      <a href="https://github.com/MadnessCODE/dbclient" target="_blank" rel="noopener">github.com/MadnessCODE/dbclient</a>
+    </footer>
+
+    <script src="main.js"></script>
+  </body>
+</html>
