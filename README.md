@@ -52,7 +52,7 @@ Built with Rust and Tauri — small, native and quick to start.
 
 ## Download
 
-**Windows:** download `DB.Client_x.y.z_x64-setup.exe` from the [latest release](https://github.com/MadnessCODE/dbclient/releases/latest) and run it. It installs for the current user (no admin rights needed), and the app updates itself when a new version is out.
+**Windows:** download the installer from the [latest release](https://github.com/MadnessCODE/dbclient/releases/latest) and run it: `x64-setup.exe` for most PCs, `arm64-setup.exe` for Windows on ARM. It installs for the current user (no admin rights needed), and the app updates itself when a new version is out.
 
 The installer isn't code-signed yet, so Windows SmartScreen may show a warning: click **More info** → **Run anyway**.
 

@@ -11,6 +11,10 @@ permissions:
 jobs:
   windows:
     runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        target: [x86_64-pc-windows-msvc, aarch64-pc-windows-msvc]
     steps:
       - uses: actions/checkout@v4
 
@@ -20,10 +24,13 @@ jobs:
           cache: npm
 
       - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
 
       - uses: swatinem/rust-cache@v2
         with:
           workspaces: "./src-tauri -> target"
+          key: ${{ matrix.target }}
 
       - run: npm ci
 
@@ -36,9 +43,9 @@ jobs:
           tagName: v__VERSION__
           releaseName: DB Client v__VERSION__ (beta)
           releaseBody: |
-            Download `DB.Client_*_x64-setup.exe` below and run it. Installed apps update themselves.
+            Download the installer below and run it: `x64-setup.exe` for most PCs, `arm64-setup.exe` for Windows on ARM (Snapdragon / Surface Pro X and similar). Installed apps update themselves.
 
             The installer isn't code-signed yet, so Windows SmartScreen may warn: click **More info** → **Run anyway**.
           releaseDraft: true
           # Updater artifacts need the signing key, so only release builds create them.
-          args: --config src-tauri/tauri.release.conf.json
+          args: --target ${{ matrix.target }} --config src-tauri/tauri.release.conf.json
