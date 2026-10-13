@@ -147,11 +147,10 @@ function ImportConnections() {
           rows.map(({ source: s, items }) => (
             <section key={s.path} className="flex flex-col gap-1.5">
               <div className="flex items-baseline gap-2">
-                <h3 className="text-[13px] font-semibold">{s.tool}</h3>
+                <h3 className="text-[13px] font-semibold" title={s.path}>
+                  {s.tool}
+                </h3>
                 <span className="text-[11.5px] text-muted">{items.length} connection{items.length === 1 ? "" : "s"}</span>
-                <span className="ml-auto max-w-[360px] truncate text-[11px] text-muted" title={s.path}>
-                  {s.path}
-                </span>
               </div>
               {s.error && <p className="text-[12px] text-err">{s.error}</p>}
               {s.note && <p className="text-[11.5px] text-muted">{s.note}</p>}
