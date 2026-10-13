@@ -1,10 +1,35 @@
-import { Download, X } from "lucide-react";
-import { installUpdate, useUpdater } from "../lib/updater";
+import { Download, PartyPopper, X } from "lucide-react";
+import { openUrl } from "@tauri-apps/plugin-opener";
+import { installUpdate, releaseUrl, useUpdater } from "../lib/updater";
 import { Button } from "./ui";
 
+function WhatsNew({ version }: { version: string }) {
+  return (
+    <button onClick={() => void openUrl(releaseUrl(version))} className="text-[12px] font-medium text-accent hover:underline">
+      What's new
+    </button>
+  );
+}
+
 export function UpdateToast() {
-  const { prompt, status, version, progress, error, dismiss } = useUpdater();
-  if (!prompt) return null;
+  const { prompt, status, version, progress, error, dismiss, updatedTo } = useUpdater();
+  if (!prompt && !updatedTo) return null;
+  if (!prompt && updatedTo)
+    return (
+      <div className="pointer-events-auto flex animate-[tip-in_160ms_ease-out] gap-3 rounded-xl border border-ok/40 bg-raised p-3.5 shadow-2xl shadow-black/50">
+        <PartyPopper size={20} className="mt-px shrink-0 text-ok" />
+        <div className="min-w-0 flex-1">
+          <div className="text-[13px] font-semibold text-fg">Updated to DB Client {updatedTo}</div>
+          <div className="mt-1">
+            <WhatsNew version={updatedTo} />
+          </div>
+        </div>
+        <button title="Close" onClick={() => useUpdater.setState({ updatedTo: undefined })} className="h-6 shrink-0 rounded p-0.5 text-muted hover:bg-hover hover:text-fg">
+          <X size={15} />
+        </button>
+      </div>
+    );
+
   const busy = status === "downloading";
   return (
     <div className="pointer-events-auto flex animate-[tip-in_160ms_ease-out] gap-3 rounded-xl border border-accent/50 bg-raised p-3.5 shadow-2xl shadow-black/50">
@@ -28,13 +53,18 @@ export function UpdateToast() {
           <div className="mt-0.5 text-[12px] text-fg-2">Install now and restart, or keep working and update later.</div>
         )}
         {!busy && (
-          <div className="mt-2.5 flex gap-2">
+          <div className="mt-2.5 flex items-center gap-2">
             <Button variant="primary" className="h-7" onClick={() => void installUpdate()}>
               {status === "error" ? "Retry" : "Install & restart"}
             </Button>
             <Button variant="ghost" className="h-7" onClick={dismiss}>
               Later
             </Button>
+            {version && (
+              <span className="ml-auto">
+                <WhatsNew version={version} />
+              </span>
+            )}
           </div>
         )}
       </div>

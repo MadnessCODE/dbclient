@@ -6,7 +6,7 @@ import { ExternalLink } from "lucide-react";
 import { useStore } from "../store";
 import { DbIcon, Modal } from "./ui";
 import { AnimatedLogo } from "./AnimatedLogo";
-import { checkForUpdates, useUpdater } from "../lib/updater";
+import { checkForUpdates, releaseUrl, useUpdater } from "../lib/updater";
 
 export const AUTHOR = "MadnessCODE";
 export const AUTHOR_URL = "https://github.com/madnesscode";
@@ -92,6 +92,11 @@ export function AboutDialog() {
               <span className="rounded border border-warn/50 bg-warn/15 px-1.5 py-px text-[10px] font-bold tracking-wider text-warn">BETA</span>
             </p>
             <UpdateCheck />
+            {version && (
+              <button onClick={() => void openUrl(releaseUrl(version))} className="mt-0.5 text-[11.5px] text-accent hover:underline">
+                What's new in {version}
+              </button>
+            )}
             <p className="mx-auto mt-2 max-w-[300px] text-[13px] text-fg-2">Fast desktop client for PostgreSQL and MySQL. Built with Rust and Tauri.</p>
             <button onClick={() => void openUrl(AUTHOR_URL)} className="mt-3 inline-flex items-center gap-1.5 text-[12px] text-accent hover:underline">
               <GithubMark /> github.com/madnesscode <ExternalLink size={12} />

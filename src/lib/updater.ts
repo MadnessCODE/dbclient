@@ -2,6 +2,12 @@
 import { create } from "zustand";
 import { check, type Update } from "@tauri-apps/plugin-updater";
 import { relaunch } from "@tauri-apps/plugin-process";
+import { getVersion } from "@tauri-apps/api/app";
+
+const REPO = "https://github.com/MadnessCODE/dbclient";
+/** How often a running app looks for a new version. */
+const CHECK_EVERY_MS = 3 * 60 * 60 * 1000;
+const LAST_VERSION_KEY = "dbc.lastVersion";
 
 type Status = "idle" | "checking" | "latest" | "available" | "downloading" | "error";
 
@@ -14,15 +20,25 @@ interface UpdaterState {
   progress: number | null;
   /** Show the update toast */
   prompt: boolean;
+  /** Set on the first start after an update */
+  updatedTo?: string;
   dismiss: () => void;
 }
 
-export const useUpdater = create<UpdaterState>((set) => ({
+/** Version the user said "Later" to; background checks don't ask again for it. */
+let dismissed: string | undefined;
+
+export const useUpdater = create<UpdaterState>((set, get) => ({
   status: "idle",
   progress: null,
   prompt: false,
-  dismiss: () => set({ prompt: false }),
+  dismiss: () => {
+    dismissed = get().version;
+    set({ prompt: false });
+  },
 }));
+
+export const releaseUrl = (version: string) => `${REPO}/releases/tag/v${version.replace(/^v/, "")}`;
 
 let pending: Update | null = null;
 
@@ -33,10 +49,33 @@ export async function checkForUpdates(silent = false) {
   useUpdater.setState({ status: "checking", error: undefined });
   try {
     pending = await check();
-    if (pending) useUpdater.setState({ status: "available", version: pending.version, notes: pending.body, prompt: true });
+    if (pending) useUpdater.setState({ status: "available", version: pending.version, notes: pending.body, prompt: !silent || pending.version !== dismissed });
     else useUpdater.setState({ status: "latest" });
   } catch (e) {
     useUpdater.setState({ status: silent ? "idle" : "error", error: String(e) });
+  }
+}
+
+/** Checks shortly after start, then every few hours while the app runs. Returns a cleanup. */
+export function startUpdateChecks() {
+  const first = setTimeout(() => void checkForUpdates(true), 5000);
+  const every = setInterval(() => void checkForUpdates(true), CHECK_EVERY_MS);
+  void noteUpdatedVersion();
+  return () => {
+    clearTimeout(first);
+    clearInterval(every);
+  };
+}
+
+/** Shows "updated to ..." once after the app starts on a newer version. */
+async function noteUpdatedVersion() {
+  try {
+    const current = await getVersion();
+    const last = localStorage.getItem(LAST_VERSION_KEY);
+    localStorage.setItem(LAST_VERSION_KEY, current);
+    if (last && last !== current) useUpdater.setState({ updatedTo: current });
+  } catch {
+    // no storage or not in Tauri
   }
 }
 

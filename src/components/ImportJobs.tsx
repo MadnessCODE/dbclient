@@ -236,7 +236,7 @@ export function ImportToasts() {
   const toasts = useImports((s) => s.toasts);
   const close = useImports((s) => s.closeToast);
   const show = useImports((s) => s.show);
-  const update = useUpdater((s) => s.prompt);
+  const update = useUpdater((s) => s.prompt || !!s.updatedTo);
   if (toasts.length === 0 && !update) return null;
   return (
     <div className="pointer-events-none fixed bottom-5 right-5 z-[90] flex w-[380px] flex-col gap-2.5">
