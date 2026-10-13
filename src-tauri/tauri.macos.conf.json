@@ -10,11 +10,18 @@
         "center": true,
         "titleBarStyle": "Overlay",
         "hiddenTitle": true,
-        "trafficLightPosition": { "x": 18, "y": 28 }
+        "trafficLightPosition": {
+          "x": 18,
+          "y": 28
+        }
       }
     ]
   },
   "bundle": {
+    "targets": [
+      "app",
+      "dmg"
+    ],
     "macOS": {
       "signingIdentity": "-",
       "minimumSystemVersion": "11.0"
