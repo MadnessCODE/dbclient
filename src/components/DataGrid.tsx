@@ -14,6 +14,7 @@ import {
   Copy,
   Eraser,
   Link2,
+  MoveHorizontal,
   Lock,
   PencilLine,
   Plus,
@@ -36,6 +37,15 @@ import { baseId } from "../lib/connIds";
 
 const ROW_H = 32;
 const GUTTER_W = 22;
+const MIN_COL_W = 50;
+
+/** Column width from its name, type and values (first rows). */
+function fitWidth(rs: ResultSet, ci: number, maxChars: number, maxW: number) {
+  const col = rs.columns[ci];
+  let len = Math.max(col.name.length, col.typeName.length);
+  for (let r = 0; r < Math.min(rs.rows.length, 300); r++) len = Math.max(len, Math.min(rs.rows[r][ci]?.length ?? 4, maxChars));
+  return Math.round(Math.min(maxW, Math.max(90, len * 7.4 + 32))) + (col.fk ? 22 : 0);
+}
 const PAGE_SIZES = [10, 25, 50, 100, 500, 1000];
 
 /** Displayed row: existing (index into rs.rows) or new. */
@@ -153,15 +163,32 @@ export function DataGrid({ rs, connId, kind, tabId }: { rs: ResultSet; connId: s
   const offset = safePage * pageSize;
   const rows = useMemo(() => display.slice(offset, offset + pageSize), [display, offset, pageSize]);
 
-  const widths = useMemo(
-    () =>
-      rs.columns.map((col, ci) => {
-        let len = Math.max(col.name.length, col.typeName.length);
-        for (let r = 0; r < Math.min(rs.rows.length, 300); r++) len = Math.max(len, Math.min(rs.rows[r][ci]?.length ?? 4, 60));
-        return Math.round(Math.min(420, Math.max(90, len * 7.4 + 32))) + (col.fk ? 22 : 0);
-      }),
-    [rs],
-  );
+  const autoWidths = useMemo(() => rs.columns.map((_, ci) => fitWidth(rs, ci, 60, 420)), [rs]);
+  // widths set by dragging a header edge
+  const [custom, setCustom] = useState<Record<number, number>>({});
+  const widths = autoWidths.map((w, i) => custom[i] ?? w);
+
+  // the click that ends a drag must not sort
+  const resized = useRef(false);
+  const startResize = (e: React.MouseEvent, col: number) => {
+    e.preventDefault();
+    e.stopPropagation();
+    resized.current = true;
+    const x0 = e.clientX;
+    const w0 = widths[col];
+    const onMove = (ev: MouseEvent) => setCustom((c) => ({ ...c, [col]: Math.max(MIN_COL_W, w0 + ev.clientX - x0) }));
+    const onUp = () => {
+      setTimeout(() => (resized.current = false));
+      window.removeEventListener("mousemove", onMove);
+      window.removeEventListener("mouseup", onUp);
+      document.body.style.cursor = "";
+    };
+    window.addEventListener("mousemove", onMove);
+    window.addEventListener("mouseup", onUp);
+    document.body.style.cursor = "col-resize";
+  };
+  /** Wide enough for the longest value (within reason). */
+  const fitColumn = (col: number) => setCustom((c) => ({ ...c, [col]: fitWidth(rs, col, 400, 1200) }));
   const totalW = GUTTER_W + widths.reduce((a, b) => a + b, 0);
 
   const virt = useVirtualizer({ count: rows.length, getScrollElement: () => scrollRef.current, estimateSize: () => ROW_H, overscan: 12 });
@@ -462,6 +489,13 @@ export function DataGrid({ rs, connId, kind, tabId }: { rs: ResultSet; connId: s
       { label: "Sort descending", icon: <ArrowDown />, onClick: () => setSort([{ col: c, dir: "desc" }]) },
       { label: "Clear sorting", disabled: !sort.length, onClick: () => setSort([]) },
       "sep",
+      { label: "Fit width to content", icon: <MoveHorizontal />, onClick: () => fitColumn(c) },
+      {
+        label: "Reset column widths",
+        disabled: Object.keys(custom).length === 0,
+        onClick: () => setCustom({}),
+      },
+      "sep",
       { label: "Select column", onClick: () => selectColumn(c) },
       { label: "Copy column name", icon: <ClipboardCopy />, onClick: () => void navigator.clipboard.writeText(rs.columns[c].name) },
     ]);
@@ -533,11 +567,21 @@ export function DataGrid({ rs, connId, kind, tabId }: { rs: ResultSet; connId: s
                 <div
                   key={i}
                   style={{ width: widths[i] }}
-                  onClick={(e) => toggleSort(i, e.shiftKey)}
+                  onClick={(e) => !resized.current && toggleSort(i, e.shiftKey)}
                   onContextMenu={(e) => headerMenu(e, i)}
-                  title="Click to sort · Shift+click to add a sort column · right-click for more"
-                  className={cx("flex shrink-0 cursor-pointer flex-col justify-center border-l border-line/60 px-3 select-none hover:bg-hover", s && "bg-accent-soft")}
+                  title="Click to sort · Shift+click to add a sort column · drag the edge to resize · right-click for more"
+                  className={cx("relative flex shrink-0 cursor-pointer flex-col justify-center border-l border-line/60 px-3 select-none hover:bg-hover", s && "bg-accent-soft")}
                 >
+                  <span
+                    title="Drag to resize · double-click to fit"
+                    onMouseDown={(e) => startResize(e, i)}
+                    onClick={(e) => e.stopPropagation()}
+                    onDoubleClick={(e) => {
+                      e.stopPropagation();
+                      fitColumn(i);
+                    }}
+                    className="absolute top-0 -right-1 z-10 h-full w-2 cursor-col-resize after:absolute after:inset-y-2 after:left-[3px] after:w-0.5 after:rounded-full hover:after:bg-accent"
+                  />
                   <span className={cx("flex items-center gap-1 text-[13px] font-medium text-fg", numeric[i] && "justify-end")}>
                     {colMap[i]?.primaryKey && <span className="text-[10px] text-warn">PK</span>}
                     <span className="truncate" title={c.origin ? `${c.origin.table}.${c.origin.column}` : c.name}>
