@@ -2,7 +2,6 @@
 import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { CircleAlert, CircleCheck, FileDown, FileUp, ListChecks, Minimize2, Square, TriangleAlert, X } from "lucide-react";
-import { api } from "../lib/api";
 import { isDone, isRunning, jobPercent, outcome, useImports, type ImportJob } from "../lib/importJobs";
 import { useUpdater } from "../lib/updater";
 import { RunView } from "./importParts";
@@ -14,6 +13,7 @@ export function ImportJobDialog() {
   const job = useImports((s) => s.jobs.find((j) => j.id === s.open));
   const show = useImports((s) => s.show);
   const dismiss = useImports((s) => s.dismiss);
+  const stop = useImports((s) => s.stop);
   if (!job) return null;
   const running = isRunning(job);
   const hide = () => show(null);
@@ -30,15 +30,15 @@ export function ImportJobDialog() {
         <RunView mode={job.kind === "export" ? "export" : "import"} fileSize={job.fileSize} progress={job.progress ?? null} summary={job.summary ?? null} error={job.error ?? null} running={running} workers={job.workers} />
       </div>
       <footer className="flex items-center gap-2 border-t border-line px-5 py-3">
-        <span className="text-[12px] text-muted">{running ? `You can keep working — the ${job.kind === "export" ? "export" : "import"} runs in the background.` : ""}</span>
+        <span className="text-[12px] text-muted">{running && job.stopping ? "Stopping — waiting for the running statements to finish…" : running ? `You can keep working — the ${job.kind === "export" ? "export" : "import"} runs in the background.` : ""}</span>
         <div className="ml-auto flex gap-2">
           {running ? (
             <>
               <Button onClick={hide}>
                 <Minimize2 size={14} /> Run in background
               </Button>
-              <Button variant="danger" onClick={() => void api.cancelImport(job.id)}>
-                <Square size={12} fill="currentColor" /> Stop {job.kind === "export" ? "export" : "import"}
+              <Button variant="danger" disabled={job.stopping} onClick={() => stop(job.id)}>
+                {job.stopping ? <Spinner size={12} /> : <Square size={12} fill="currentColor" />} {job.stopping ? "Stopping…" : `Stop ${job.kind === "export" ? "export" : "import"}`}
               </Button>
             </>
           ) : (
@@ -187,7 +187,9 @@ function TaskRow({ job: j, onOpen, onDismiss }: { job: ImportJob; onOpen: () => 
   const pct = jobPercent(j);
   const rows = j.summary?.rows ?? j.progress?.rows ?? 0;
   const status = !done
-    ? `${rows.toLocaleString()} rows · ${Math.floor(pct)}%`
+    ? j.stopping
+      ? "Stopping…"
+      : `${rows.toLocaleString()} rows · ${Math.floor(pct)}%`
     : j.error
       ? "Failed"
       : j.summary?.cancelled
@@ -219,8 +221,13 @@ function TaskRow({ job: j, onOpen, onDismiss }: { job: ImportJob; onOpen: () => 
         <span className={cx("mt-1 block text-[11.5px] tabular-nums", tone === "error" ? "text-err" : "text-fg-2")}>{status}</span>
       </button>
       {!done ? (
-        <button title={j.kind === "export" ? "Stop export" : "Stop import"} onClick={() => void api.cancelImport(j.id)} className="rounded p-1 text-muted hover:bg-err/15 hover:text-err">
-          <Square size={12} fill="currentColor" />
+        <button
+          title={j.stopping ? "Stopping…" : j.kind === "export" ? "Stop export" : "Stop import"}
+          disabled={j.stopping}
+          onClick={() => useImports.getState().stop(j.id)}
+          className="rounded p-1 text-muted hover:bg-err/15 hover:text-err disabled:hover:bg-transparent"
+        >
+          {j.stopping ? <Spinner size={12} /> : <Square size={12} fill="currentColor" />}
         </button>
       ) : (
         <button title="Remove from list" onClick={onDismiss} className="rounded p-1 text-muted opacity-0 hover:bg-bg hover:text-fg group-hover:opacity-100">

@@ -3,7 +3,7 @@
 import { create } from "zustand";
 import { listen } from "@tauri-apps/api/event";
 import { isPermissionGranted, requestPermission, sendNotification } from "@tauri-apps/plugin-notification";
-import { errorText, type ImportProgress, type ImportSummary } from "./api";
+import { api, errorText, type ImportProgress, type ImportSummary } from "./api";
 import { useStore } from "../store";
 
 export interface ImportJob {
@@ -21,6 +21,8 @@ export interface ImportJob {
   error?: string;
   /** The user has seen the result */
   seen: boolean;
+  /** Stop was clicked; running statements are finishing */
+  stopping?: boolean;
 }
 
 export interface Toast {
@@ -38,6 +40,7 @@ interface State {
   toasts: Toast[];
   show: (id: string | null) => void;
   dismiss: (id: string) => void;
+  stop: (id: string) => void;
   clearFinished: () => void;
   closeToast: (id: string) => void;
 }
@@ -53,6 +56,10 @@ export const useImports = create<State>()((set) => ({
       toasts: id ? s.toasts.filter((t) => t.jobId !== id) : s.toasts,
     })),
   dismiss: (id) => set((s) => ({ jobs: s.jobs.filter((j) => j.id !== id), open: s.open === id ? null : s.open })),
+  stop: (id) => {
+    set((s) => ({ jobs: s.jobs.map((j) => (j.id === id ? { ...j, stopping: true } : j)) }));
+    void api.cancelImport(id);
+  },
   clearFinished: () => set((s) => ({ jobs: s.jobs.filter((j) => !isDone(j)) })),
   closeToast: (id) => set((s) => ({ toasts: s.toasts.filter((t) => t.id !== id) })),
 }));
