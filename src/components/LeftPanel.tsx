@@ -152,7 +152,7 @@ function ConnectionsTree() {
           <Button title="New project (group of connections)" className="h-8 w-9 shrink-0 px-0" onClick={() => setUi({ projectDialog: { open: true } })}>
             <FolderPlus size={16} />
           </Button>
-          <Button title="Import connections from DBeaver, pgAdmin, Workbench…" className="h-8 w-9 shrink-0 px-0" onClick={() => setUi({ connImport: true })}>
+          <Button title="Import connections from DBeaver, pgAdmin, Workbench, Sequel Ace…" className="h-8 w-9 shrink-0 px-0" onClick={() => setUi({ connImport: true })}>
             <Import size={16} />
           </Button>
         </div>
@@ -171,7 +171,7 @@ function ConnectionsTree() {
           <p className="px-3 py-4 text-center text-[12px] text-muted">
             No connections yet. Click “New Connection”, or{" "}
             <button className="text-accent hover:underline" onClick={() => setUi({ connImport: true })}>
-              import them from DBeaver, pgAdmin or Workbench
+              import them from DBeaver, pgAdmin, Workbench or Sequel Ace
             </button>
             .
           </p>

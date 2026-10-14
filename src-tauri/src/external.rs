@@ -27,6 +27,8 @@ pub struct Candidate {
     pub group: Option<String>,
     /// "dev" | "staging" | "production"
     pub environment: Option<String>,
+    /// Palette color key, when the other tool has one
+    pub color: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -84,6 +86,17 @@ pub fn discover(with_passwords: bool) -> Vec<Found> {
     if let Some(p) = workbench {
         add("MySQL Workbench", p.join("connections.xml"), &workbench_xml);
     }
+    if cfg!(target_os = "macos") {
+        if let Some(h) = home() {
+            for (tool, dir) in [
+                ("Sequel Ace", "Library/Containers/com.sequel-ace.sequel-ace/Data/Library/Application Support/Sequel Ace/Data"),
+                ("Sequel Ace", "Library/Application Support/Sequel Ace/Data"),
+                ("Sequel Pro", "Library/Application Support/Sequel Pro/Data"),
+            ] {
+                add(tool, h.join(dir).join("Favorites.plist"), &|p| sequel_favorites(p, tool));
+            }
+        }
+    }
     if let Some(p) = pgpass_path() {
         add("pgpass", p, &|p| pgpass(p, with_passwords));
     }
@@ -96,6 +109,9 @@ pub fn read_file(path: &str, with_passwords: bool) -> AppResult<Found> {
     let name = p.file_name().map(|n| n.to_string_lossy().to_lowercase()).unwrap_or_default();
     if name.ends_with(".db") {
         return pgadmin_db(p);
+    }
+    if name.ends_with(".plist") || std::fs::read(p).is_ok_and(|b| b.starts_with(b"bplist")) {
+        return sequel_favorites(p, "Sequel Ace");
     }
     if name.ends_with(".xml") {
         return workbench_xml(p);
@@ -114,7 +130,7 @@ pub fn read_file(path: &str, with_passwords: bool) -> AppResult<Found> {
     if text.lines().any(|l| !l.trim().is_empty() && !l.starts_with('#') && l.split(':').count() >= 5) {
         return pgpass(p, with_passwords);
     }
-    Err(msg("Unknown file. Supported: DBeaver data-sources.json, pgAdmin servers.json or pgadmin4.db, MySQL Workbench connections.xml, .pgpass"))
+    Err(msg("Unknown file. Supported: DBeaver data-sources.json, pgAdmin servers.json or pgadmin4.db, MySQL Workbench connections.xml, Sequel Ace / Sequel Pro favorites (.plist), .pgpass"))
 }
 
 fn found(tool: &str, path: &Path, connections: Vec<Candidate>, note: Option<String>) -> Found {
@@ -224,6 +240,7 @@ fn dbeaver(path: &Path, with_passwords: bool) -> AppResult<Found> {
             ssh_secret,
             group: c.get("folder").and_then(Value::as_str).map(str::to_owned),
             environment,
+            color: None,
         });
     }
     let mut notes = Vec::new();
@@ -309,6 +326,7 @@ fn pgadmin_db(path: &Path) -> AppResult<Found> {
                 ssh_secret: None,
                 group: r.get::<_, Option<String>>(5)?.filter(|g| g != "Servers"),
                 environment: None,
+                color: None,
             })
         })
         .map_err(|e| msg(e.to_string()))?;
@@ -365,6 +383,7 @@ fn pgadmin_json(path: &Path, v: &Value) -> AppResult<Found> {
             ssh_secret: None,
             group: Some(s(c, "Group")).filter(|g| !g.is_empty() && g != "Servers"),
             environment: None,
+            color: None,
         });
     }
     Ok(found("pgAdmin 4", path, with_pgpass(out), None))
@@ -413,6 +432,7 @@ fn workbench_xml(path: &Path) -> AppResult<Found> {
             ssh_secret: None,
             group: None,
             environment: None,
+            color: None,
         });
     }
     Ok(found("MySQL Workbench", path, out, Some("Workbench keeps passwords in the system vault; you'll enter them on first connect.".into())))
@@ -420,6 +440,80 @@ fn workbench_xml(path: &Path) -> AppResult<Found> {
 
 fn unescape(s: &str) -> String {
     s.replace("&lt;", "<").replace("&gt;", ">").replace("&quot;", "\"").replace("&apos;", "'").replace("&amp;", "&")
+}
+
+// ---- Sequel Ace / Sequel Pro
+
+/// Favorites.plist (binary or XML), or a file from File → Export Favorites. Groups nest under
+/// "Children"; passwords stay in the macOS keychain.
+fn sequel_favorites(path: &Path, tool: &str) -> AppResult<Found> {
+    let root = plist::Value::from_file(path).map_err(|e| msg(format!("Couldn't read {}: {e}", path.display())))?;
+    let mut out = Vec::new();
+    collect_favorites(&root, None, &mut out);
+    Ok(found(tool, path, out, Some(format!("{tool} keeps passwords in the macOS keychain; you'll enter them on first connect."))))
+}
+
+fn collect_favorites(v: &plist::Value, group: Option<&str>, out: &mut Vec<Candidate>) {
+    match v {
+        plist::Value::Array(items) => items.iter().for_each(|x| collect_favorites(x, group, out)),
+        plist::Value::Dictionary(d) => {
+            let text = |k: &str| match d.get(k) {
+                Some(plist::Value::String(s)) => s.trim().to_owned(),
+                Some(plist::Value::Integer(i)) => i.as_signed().map(|n| n.to_string()).unwrap_or_default(),
+                _ => String::new(),
+            };
+            let num = |k: &str| text(k).parse::<i64>().ok();
+            if d.contains_key("host") || (d.contains_key("type") && d.contains_key("user")) {
+                // 0 = TCP/IP, 1 = socket, 2 = SSH tunnel
+                let kind = num("type").unwrap_or(0);
+                let host = text("host");
+                let ssh = (kind == 2).then(|| {
+                    let key = text("sshKeyLocation");
+                    let use_key = num("sshKeyLocationEnabled").unwrap_or(0) != 0 && !key.is_empty();
+                    SshConfig {
+                        enabled: true,
+                        host: text("sshHost"),
+                        port: num("sshPort").filter(|p| *p > 0).unwrap_or(22) as u16,
+                        user: text("sshUser"),
+                        auth: if use_key { SshAuth::Key } else { SshAuth::Password },
+                        key_path: if use_key { key } else { String::new() },
+                    }
+                });
+                let color = match num("colorIndex") {
+                    Some(0) => Some("red"),
+                    Some(1) => Some("orange"),
+                    Some(2) => Some("amber"),
+                    Some(3) => Some("green"),
+                    Some(4) => Some("blue"),
+                    Some(5) => Some("purple"),
+                    _ => None,
+                };
+                out.push(Candidate {
+                    name: text("name"),
+                    kind: DbKind::Mysql,
+                    host: if host.is_empty() { "localhost".into() } else { host },
+                    port: num("port").filter(|p| *p > 0).unwrap_or(3306) as u16,
+                    user: text("user"),
+                    database: text("database"),
+                    ssl: if num("useSSL").unwrap_or(0) != 0 { SslMode::Require } else { SslMode::Prefer },
+                    ssh,
+                    password: None,
+                    ssh_secret: None,
+                    group: group.map(str::to_owned),
+                    environment: None,
+                    color: color.map(str::to_owned),
+                });
+                return;
+            }
+            // a group: its own name for the children, except the invisible root
+            let name = text("Name");
+            let child_group = if name.is_empty() || name.eq_ignore_ascii_case("favorites") { group.map(str::to_owned) } else { Some(name) };
+            for (_, x) in d.iter() {
+                collect_favorites(x, child_group.as_deref(), out);
+            }
+        }
+        _ => {}
+    }
 }
 
 // ---- .pgpass
@@ -480,6 +574,7 @@ fn pgpass(path: &Path, with_passwords: bool) -> AppResult<Found> {
             ssh_secret: None,
             group: None,
             environment: None,
+            color: None,
         })
         .collect();
     Ok(found("pgpass", path, list, None))
@@ -506,6 +601,36 @@ mod tests {
     fn jdbc_urls() {
         assert_eq!(parse_jdbc("jdbc:postgresql://db.example.com:5433/shop?ssl=true"), Some(("db.example.com".into(), Some(5433), "shop".into())));
         assert_eq!(parse_jdbc("jdbc:mysql://localhost/app"), Some(("localhost".into(), None, "app".into())));
+    }
+
+    #[test]
+    fn sequel_ace_plist() {
+        let xml = r#"<?xml version="1.0" encoding="UTF-8"?>
+<plist version="1.0"><dict><key>Favorites Root</key><dict><key>Name</key><string>FAVORITES</string><key>Children</key><array>
+  <dict><key>name</key><string>Local</string><key>host</key><string>127.0.0.1</string><key>user</key><string>root</string><key>port</key><string></string><key>type</key><integer>0</integer><key>colorIndex</key><integer>3</integer></dict>
+  <dict><key>Name</key><string>Clients</string><key>Children</key><array>
+    <dict><key>name</key><string>Acme prod</string><key>host</key><string>10.0.0.5</string><key>user</key><string>app</string><key>database</key><string>shop</string><key>port</key><string>3307</string><key>type</key><integer>2</integer>
+      <key>sshHost</key><string>bastion.acme.io</string><key>sshUser</key><string>deploy</string><key>sshPort</key><string>2222</string><key>sshKeyLocationEnabled</key><integer>1</integer><key>sshKeyLocation</key><string>~/.ssh/id_ed25519</string><key>useSSL</key><integer>1</integer><key>colorIndex</key><integer>0</integer></dict>
+  </array></dict>
+</array></dict></dict></plist>"#;
+        let dir = std::env::temp_dir().join("dbc_sequel_test");
+        std::fs::create_dir_all(&dir).unwrap();
+        let xml_path = dir.join("Favorites.plist");
+        std::fs::write(&xml_path, xml).unwrap();
+        // the app writes binary plists; check both
+        let bin_path = dir.join("binary.plist");
+        plist::Value::from_file(&xml_path).unwrap().to_file_binary(&bin_path).unwrap();
+        for p in [&xml_path, &bin_path] {
+            let f = read_file(p.to_str().unwrap(), true).unwrap();
+            assert_eq!(f.connections.len(), 2);
+            let a = &f.connections[0];
+            assert_eq!((a.host.as_str(), a.port, a.user.as_str(), a.color.as_deref()), ("127.0.0.1", 3306, "root", Some("green")));
+            assert!(a.group.is_none());
+            let b = &f.connections[1];
+            assert_eq!((b.port, b.database.as_str(), b.group.as_deref(), b.ssl), (3307, "shop", Some("Clients"), SslMode::Require));
+            let ssh = b.ssh.as_ref().unwrap();
+            assert_eq!((ssh.host.as_str(), ssh.port, ssh.user.as_str(), ssh.auth, ssh.key_path.as_str()), ("bastion.acme.io", 2222, "deploy", SshAuth::Key, "~/.ssh/id_ed25519"));
+        }
     }
 
     #[test]

@@ -26,7 +26,7 @@ Built with Rust and Tauri — small, native and quick to start.
 - Passwords stored in the system keychain (Windows Credential Manager, macOS Keychain, Linux Secret Service)
 - Projects to group connections, colors and environment labels (DEV / STAGING / PROD)
 - **Production guard**: statements that change data ask for confirmation on PROD connections
-- Import connections from DBeaver, pgAdmin 4, MySQL Workbench and `.pgpass`, including saved passwords where the tool allows it
+- Import connections from DBeaver, pgAdmin 4, MySQL Workbench, Sequel Ace / Sequel Pro and `.pgpass`, including saved passwords where the tool allows it
 
 **Querying**
 - SQL editor (Monaco) with autocomplete for tables, columns and aliases

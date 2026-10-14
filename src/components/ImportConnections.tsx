@@ -1,4 +1,4 @@
-// Bring connections over from DBeaver, pgAdmin, MySQL Workbench and .pgpass.
+// Bring connections over from DBeaver, pgAdmin, MySQL Workbench, Sequel Ace and .pgpass.
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
 import { FileSearch, KeyRound, Lock, Network } from "lucide-react";
@@ -65,7 +65,7 @@ function ImportConnections() {
   const pickFile = async () => {
     const path = await open({
       multiple: false,
-      filters: [{ name: "Connections", extensions: ["json", "xml", "db", "conf", "pgpass", "txt"] }, { name: "All files", extensions: ["*"] }],
+      filters: [{ name: "Connections", extensions: ["json", "xml", "db", "plist", "conf", "pgpass", "txt"] }, { name: "All files", extensions: ["*"] }],
     });
     if (typeof path !== "string") return;
     try {
@@ -113,7 +113,7 @@ function ImportConnections() {
           ssl: c.ssl,
           ssh: c.ssh,
           environment: env?.key ?? null,
-          color: env?.defaultColor ?? null,
+          color: env?.defaultColor ?? c.color ?? null,
           projectId: (groupsAsProjects && c.group && projectIds.get(c.group)) || null,
           savePassword: !!c.password,
           password: c.password,
@@ -133,7 +133,7 @@ function ImportConnections() {
   return (
     <Modal title="Import connections" onClose={close} width={760}>
       <div className="flex max-h-[68vh] flex-col gap-4 overflow-y-auto px-5 py-4">
-        <p className="text-[13px] text-fg-2">Connections saved by DBeaver, pgAdmin 4, MySQL Workbench and .pgpass on this computer. Nothing is changed in those tools.</p>
+        <p className="text-[13px] text-fg-2">Connections saved by DBeaver, pgAdmin 4, MySQL Workbench, Sequel Ace and .pgpass on this computer. Nothing is changed in those tools.</p>
 
         {sources === null ? (
           <div className="flex items-center gap-2 py-6 text-[13px] text-muted">
@@ -164,7 +164,7 @@ function ImportConnections() {
         )}
 
         <button onClick={() => void pickFile()} className="flex items-center gap-2 self-start text-[12.5px] text-accent hover:underline">
-          <FileSearch size={14} /> Import from a file… (data-sources.json, servers.json, connections.xml, pgpass)
+          <FileSearch size={14} /> Import from a file… (data-sources.json, servers.json, connections.xml, Favorites.plist, pgpass)
         </button>
 
         <div className="flex flex-col gap-1 border-t border-line pt-3">

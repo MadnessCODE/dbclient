@@ -4,6 +4,13 @@ Every release has a section here. The release workflow copies the section of the
 built into the GitHub release notes (and the in-app update prompt links to them), so a version
 without a section won't build.
 
+## 0.1.4
+
+### New
+- **Import connections from Sequel Ace and Sequel Pro** (macOS): favorites with their groups,
+  SSH tunnels, SSL and colors, found automatically or read from an exported `.plist` file.
+  Passwords stay in the macOS keychain, so you enter them on first connect.
+
 ## 0.1.3
 
 ### New

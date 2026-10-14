@@ -63,6 +63,8 @@ export interface ExternalCandidate {
   /** Folder or server group in the other tool */
   group: string | null;
   environment: "dev" | "staging" | "production" | null;
+  /** Palette color key */
+  color: string | null;
 }
 
 export interface ExternalSource {

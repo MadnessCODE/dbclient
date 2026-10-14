@@ -58,7 +58,7 @@ export function HomePage() {
             </button>
             <button
               onClick={() => useStore.getState().setUi({ connImport: true })}
-              title="Import connections from DBeaver, pgAdmin, MySQL Workbench or .pgpass"
+              title="Import connections from DBeaver, pgAdmin, MySQL Workbench, Sequel Ace or .pgpass"
               className="flex items-center gap-2 rounded-lg border border-line-strong px-3 py-2 text-[13px] text-fg-2 hover:bg-hover hover:text-fg"
             >
               <Import size={15} /> Import
