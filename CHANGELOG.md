@@ -11,6 +11,12 @@ without a section won't build.
   SSH tunnels, SSL and colors, found automatically or read from an exported `.plist` file.
   Passwords stay in the macOS keychain, so you enter them on first connect.
 
+### Fixed
+- **Sorting a limited result now sorts in the database.** When a query has a `LIMIT` (like
+  *Open (first 100 rows)*) or hits the Max rows setting, clicking a column header re-runs it with
+  `ORDER BY`, so you get the real first or last rows of the table instead of just the loaded
+  ones in a different order. Results that are fully loaded are still sorted instantly in the grid.
+
 ## 0.1.3
 
 ### New
