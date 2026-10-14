@@ -1,5 +1,6 @@
 // Results grid: typed rendering, sorting, Excel-like selection and transactional edits.
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { ask } from "@tauri-apps/plugin-dialog";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import {
   ArrowDown,
@@ -28,7 +29,7 @@ import { cellKind, isTruthy, type CellKind } from "../lib/cellKind";
 import { isProduction } from "../lib/connStyle";
 import { buildDml, editTargetOf, emptyPending, pendingCount, type EditTarget, type PendingEdits, type RowKey } from "../lib/edit";
 import { quoteIdent } from "../lib/sql";
-import { gridViews } from "../lib/export";
+import { exportableQuery, gridViews, sortedQuery, type SortKey } from "../lib/export";
 import { useStore, type MenuEntry } from "../store";
 import { CellEditor } from "./CellEditor";
 import { BulkSetDialog, ValueModal } from "./ValueModal";
@@ -50,11 +51,6 @@ const PAGE_SIZES = [10, 25, 50, 100, 500, 1000];
 
 /** Displayed row: existing (index into rs.rows) or new. */
 type DisplayRow = { key: RowKey; existing: number | null };
-
-interface SortKey {
-  col: number;
-  dir: "asc" | "desc";
-}
 
 const collator = new Intl.Collator(undefined, { numeric: true, sensitivity: "base" });
 
@@ -97,7 +93,12 @@ export function DataGrid({ rs, connId, kind, tabId }: { rs: ResultSet; connId: s
   const setSettings = useStore((s) => s.setSettings);
   const cfg = useStore((s) => s.connections.find((c) => c.id === baseId(connId)));
   const [page, setPage] = useState(0);
-  const [sort, setSort] = useState<SortKey[]>([]);
+  // the grid remounts per query, so a database sort comes back through the runtime
+  const [ran] = useState(() => {
+    const rt = useStore.getState().runtime[tabId];
+    return { base: rt?.serverSort?.base ?? rt?.lastSql, sort: rt?.serverSort?.keys ?? [] };
+  });
+  const [sort, setSort] = useState<SortKey[]>(ran.sort);
   const [pending, setPending] = useState<PendingEdits>(emptyPending);
   const [selection, setSelection] = useState<Set<string>>(new Set());
   // anchor is a ref so dragging sees it before the next render
@@ -142,7 +143,12 @@ export function DataGrid({ rs, connId, kind, tabId }: { rs: ResultSet; connId: s
   const numeric = useMemo(() => kinds.map((k) => k === "number"), [kinds]);
   const colEditable = (c: number) => editable && !!colMap[c] && kinds[c] !== "binary";
 
-  const order = useMemo(() => sortIndexes(rs.rows, sort, numeric), [rs.rows, sort, numeric]);
+  // with a LIMIT or the Max rows cap only part of the data is loaded: sort in the database
+  const sortOnServer = useMemo(() => {
+    const q = connId ? exportableQuery(ran.base, kind) : null;
+    return !!q && (!!q.limit || rs.truncated || ran.sort.length > 0);
+  }, [connId, ran, kind, rs.truncated]);
+  const order = useMemo(() => (sortOnServer ? rs.rows.map((_, i) => i) : sortIndexes(rs.rows, sort, numeric)), [sortOnServer, rs.rows, sort, numeric]);
   const display: DisplayRow[] = useMemo(
     () => [...order.map((i) => ({ key: `e${i}`, existing: i })), ...pending.added.map((a) => ({ key: a.key, existing: null }))],
     [order, pending.added],
@@ -485,9 +491,9 @@ export function DataGrid({ rs, connId, kind, tabId }: { rs: ResultSet; connId: s
 
   const headerMenu = (e: React.MouseEvent, c: number) =>
     useStore.getState().openContextMenu(e, [
-      { label: "Sort ascending", icon: <ArrowUp />, onClick: () => setSort([{ col: c, dir: "asc" }]) },
-      { label: "Sort descending", icon: <ArrowDown />, onClick: () => setSort([{ col: c, dir: "desc" }]) },
-      { label: "Clear sorting", disabled: !sort.length, onClick: () => setSort([]) },
+      { label: "Sort ascending", icon: <ArrowUp />, onClick: () => applySort([{ col: c, dir: "asc" }]) },
+      { label: "Sort descending", icon: <ArrowDown />, onClick: () => applySort([{ col: c, dir: "desc" }]) },
+      { label: "Clear sorting", disabled: !sort.length, onClick: () => applySort([]) },
       "sep",
       { label: "Fit width to content", icon: <MoveHorizontal />, onClick: () => fitColumn(c) },
       {
@@ -500,17 +506,24 @@ export function DataGrid({ rs, connId, kind, tabId }: { rs: ResultSet; connId: s
       { label: "Copy column name", icon: <ClipboardCopy />, onClick: () => void navigator.clipboard.writeText(rs.columns[c].name) },
     ]);
 
-  const toggleSort = (col: number, multi: boolean) => {
-    setSort((cur) => {
-      const existing = cur.find((s) => s.col === col);
-      const next: SortKey | null = !existing ? { col, dir: "asc" } : existing.dir === "asc" ? { col, dir: "desc" } : null;
-      if (!multi) return next ? [next] : [];
-      const rest = cur.filter((s) => s.col !== col);
-      if (!next) return rest;
-      return existing ? cur.map((s) => (s.col === col ? next : s)) : [...rest, next];
-    });
+  const applySort = async (keys: SortKey[]) => {
+    if (sortOnServer && ran.base) {
+      const sql = sortedQuery(ran.base, kind, keys);
+      if (!sql) return;
+      if (hasChanges && !(await ask("Sorting re-runs the query and discards unsaved changes. Continue?", { title: "Unsaved changes", kind: "warning" }))) return;
+      void useStore.getState().runTab(tabId, sql, keys.length ? { base: ran.base, keys } : undefined);
+      return;
+    }
+    setSort(keys);
     setPage(0);
     clearSelection();
+  };
+
+  const toggleSort = (col: number, multi: boolean) => {
+    const existing = sort.find((s) => s.col === col);
+    const next: SortKey | null = !existing ? { col, dir: "asc" } : existing.dir === "asc" ? { col, dir: "desc" } : null;
+    const rest = sort.filter((s) => s.col !== col);
+    void applySort(!multi ? (next ? [next] : []) : !next ? rest : existing ? sort.map((s) => (s.col === col ? next : s)) : [...rest, next]);
   };
 
   const modalRow = modal ? display[modal.r] : null;
@@ -533,8 +546,8 @@ export function DataGrid({ rs, connId, kind, tabId }: { rs: ResultSet; connId: s
                 <b className="font-medium text-fg">{rs.columns[s.col].name}</b> {s.dir === "asc" ? "↑" : "↓"}
               </span>
             ))}
-            {rs.truncated && <span className="text-warn">(loaded rows only)</span>}
-            <button onClick={() => setSort([])} className="flex items-center gap-1 rounded px-1.5 py-0.5 text-accent hover:bg-accent-soft">
+            {sortOnServer && <span className="text-muted">(in the database)</span>}
+            <button onClick={() => void applySort([])} className="flex items-center gap-1 rounded px-1.5 py-0.5 text-accent hover:bg-accent-soft">
               <X size={12} /> Clear
             </button>
           </span>
@@ -780,8 +793,8 @@ export function DataGrid({ rs, connId, kind, tabId }: { rs: ResultSet; connId: s
           onSaved={() => {
             setSaveSql(null);
             setPending(emptyPending());
-            const lastSql = useStore.getState().runtime[tabId]?.lastSql;
-            if (lastSql) void useStore.getState().runTab(tabId, lastSql);
+            const rt = useStore.getState().runtime[tabId];
+            if (rt?.lastSql) void useStore.getState().runTab(tabId, rt.lastSql, rt.serverSort);
           }}
         />
       )}

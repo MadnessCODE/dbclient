@@ -18,6 +18,7 @@ import {
   type ServerInfo,
 } from "./lib/api";
 import { baseId, dbOf, isMultiDb } from "./lib/connIds";
+import type { SortKey } from "./lib/export";
 
 export type ConnStatus = "idle" | "connecting" | "connected" | "error";
 
@@ -55,6 +56,11 @@ export interface Message {
 
 export type ResultTab = "results" | "structure" | "messages" | "history" | "explain";
 
+export interface ServerSort {
+  base: string;
+  keys: SortKey[];
+}
+
 export interface TabRuntime {
   running: boolean;
   queryId?: string;
@@ -68,6 +74,8 @@ export interface TabRuntime {
   resultTab: ResultTab;
   /** Last executed SQL, to refresh results after saving edits */
   lastSql?: string;
+  /** lastSql is `base` re-run with ORDER BY from a grid header sort */
+  serverSort?: ServerSort;
   /** A long query finished while the tab was inactive */
   unseen?: "ok" | "error";
 }
@@ -241,7 +249,7 @@ interface State {
   closeTab: (id: string) => void;
   setActiveTab: (id: string) => void;
   updateTab: (id: string, patch: Partial<EditorTab>) => void;
-  runTab: (id: string, sql?: string) => Promise<void>;
+  runTab: (id: string, sql?: string, serverSort?: ServerSort) => Promise<void>;
   cancelTab: (id: string) => Promise<void>;
   explainTab: (id: string, sql: string) => Promise<void>;
   patchRuntime: (id: string, patch: Partial<TabRuntime>) => void;
@@ -494,7 +502,7 @@ export const useStore = create<State>()(
         patchRuntime: (id, patch) =>
           set((s) => ({ runtime: { ...s.runtime, [id]: { ...(s.runtime[id] ?? emptyRuntime()), ...patch } } })),
 
-        runTab: async (tabId, sqlArg) => {
+        runTab: async (tabId, sqlArg, serverSort) => {
           const tab = get().tabs.find((t) => t.id === tabId);
           if (!tab) return;
           const sql = (sqlArg ?? tab.sql).trim();
@@ -536,7 +544,7 @@ export const useStore = create<State>()(
           }
 
           const queryId = uid();
-          get().patchRuntime(tabId, { running: true, queryId, startedAt: Date.now(), error: undefined, lastSql: sql });
+          get().patchRuntime(tabId, { running: true, queryId, startedAt: Date.now(), error: undefined, lastSql: sql, serverSort });
           const historyItem: HistoryItem = { id: queryId, tabId, sql, connId, title: tab.title, at: Date.now(), ok: false };
           try {
             const output = await api.runQuery(connId, queryId, sql, get().settings.maxRows);

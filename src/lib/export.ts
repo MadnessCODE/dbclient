@@ -75,6 +75,22 @@ export function exportableQuery(sql: string | undefined, kind: DbKind): { sql: s
   return { sql: text, unlimited: null, limit: null };
 }
 
+export interface SortKey {
+  col: number;
+  dir: "asc" | "desc";
+}
+
+/** The query sorted in the database (positional ORDER BY), keeping its LIMIT; wrapped when it already has an ORDER BY. */
+export function sortedQuery(sql: string, kind: DbKind, keys: SortKey[]): string | null {
+  const q = exportableQuery(sql, kind);
+  if (!q) return null;
+  if (!keys.length) return q.sql;
+  const body = q.unlimited ?? q.sql;
+  const by = keys.map((k) => `${k.col + 1} ${k.dir.toUpperCase()}`).join(", ");
+  const limit = q.limit ? `\n${q.limit}` : "";
+  return /\border\s+by\b/i.test(body) ? `SELECT *\nFROM (\n${body}\n) AS _sorted\nORDER BY ${by}${limit}` : `${body}\nORDER BY ${by}${limit}`;
+}
+
 /** Grid state per tab: sorted row order and selected rows (indexes into rs.rows). */
 export const gridViews = new Map<string, { rs: ResultSet; order: number[]; selected: number[] }>();
 
