@@ -2,9 +2,13 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { ask } from "@tauri-apps/plugin-dialog";
 import {
+  ArrowLeft,
   ChevronDown,
+  ChevronsUpDown,
+  Crosshair,
   ChevronRight,
   Database,
+  Ellipsis,
   FolderPlus,
   Import,
   Eye,
@@ -30,9 +34,9 @@ import { errorText, type ConnectionConfig, type DatabaseInfo, type Project, type
 import { accountKey, listAccounts, type Account } from "../lib/users";
 import { ProjectIcon } from "./ProjectIcon";
 import { quoteIdent } from "../lib/sql";
-import { useStore, type MenuEntry } from "../store";
+import { useStore, type MenuEntry, type TreeFocus } from "../store";
 import { categoryMenu, connectionMenu, databaseMenu, routineMenu, schemaMenu, tableMenu, type ObjectKind } from "../lib/treeActions";
-import { isMultiDb, subId } from "../lib/connIds";
+import { baseId, dbOf, isMultiDb, subId } from "../lib/connIds";
 import { Button, cx, DbIcon, EnvBadge, IconButton, SchemaIcon, SearchInput, Spinner } from "./ui";
 import { connColor, tint } from "../lib/connStyle";
 
@@ -118,6 +122,7 @@ function ConnectionsTree() {
   const projects = useStore((s) => s.projects);
   const loadError = useStore((s) => s.connectionsError);
   const setUi = useStore((s) => s.setUi);
+  const focus = useStore((s) => s.focus);
   const [filter, setFilter] = useState("");
 
   const sorted = useMemo(() => [...connections].sort((a, b) => a.name.localeCompare(b.name)), [connections]);
@@ -156,8 +161,25 @@ function ConnectionsTree() {
             <Import size={16} />
           </Button>
         </div>
-        {(connections.length > 3 || projects.length > 0) && <SearchInput value={filter} onChange={setFilter} placeholder="Search connections & projects..." />}
+        {!focus?.open && (connections.length > 3 || projects.length > 0) && (
+          <SearchInput value={filter} onChange={setFilter} placeholder="Search connections & projects..." />
+        )}
+        {focus && !focus.open && focus.schema && (
+          <button
+            onClick={() => useStore.getState().setFocus({ ...focus, open: true })}
+            className="flex w-full items-center gap-2 rounded-md border border-dashed border-line-strong px-2.5 py-1.5 text-left text-[12px] text-fg-2 hover:border-accent hover:text-fg"
+            title="Back to the focused schema"
+          >
+            <Crosshair size={13} className="shrink-0 text-accent" />
+            <span className="truncate">
+              Back to <b className="font-medium text-fg">{focus.schema}</b>
+            </span>
+          </button>
+        )}
       </div>
+      {focus?.open ? (
+        <FocusView focus={focus} />
+      ) : (
       <div className="min-h-0 flex-1 overflow-y-auto px-2 pb-3 text-[13px]">
         {loadError && (
           <div className="mx-2 my-2 rounded-md bg-err/10 px-3 py-2.5 text-[12px] text-err">
@@ -182,6 +204,7 @@ function ConnectionsTree() {
         ))}
         <LooseConnections items={loose} showHeader={projects.length > 0} />
       </div>
+      )}
     </div>
   );
 }
@@ -589,7 +612,7 @@ function DatabaseNode({ cfg, db }: { cfg: ConnectionConfig; db: DatabaseInfo }) 
 
 function SchemaList({ cfg, schemas, d = 0 }: { cfg: ConnectionConfig; schemas: SchemaInfo[]; d?: number }) {
   const [filter, setFilter] = useState("");
-  const firstUser = (schemas.find((s) => !s.system && s.tables.length) ?? schemas.find((s) => !s.system))?.name;
+  const firstUser = defaultSchema(schemas);
   const visible = schemas.filter((s) => matches(s.name, filter));
   const word = cfg.kind === "mysql" ? "databases" : "schemas";
   return (
@@ -603,14 +626,34 @@ function SchemaList({ cfg, schemas, d = 0 }: { cfg: ConnectionConfig; schemas: S
   );
 }
 
+/** First non-system schema with tables (else any non-system one). */
+const defaultSchema = (schemas: SchemaInfo[]) => (schemas.find((s) => !s.system && s.tables.length) ?? schemas.find((s) => !s.system))?.name;
+
 function SchemaNode({ cfg, schema: s, defaultOpen, d }: { cfg: ConnectionConfig; schema: SchemaInfo; defaultOpen: boolean; d: number }) {
-  const [open, setOpen] = useState(defaultOpen);
+  const focusOnClick = useStore((st) => !!st.settings.focusOnClick);
+  const [open, setOpen] = useState(defaultOpen && !focusOnClick);
+  const focus = () => useStore.getState().setFocus({ connId: cfg.id, schema: s.name, open: true });
   return (
     <>
-      <TreeRow depth={1 + d} open={open} onClick={() => setOpen(!open)} onContextMenu={(e) => useStore.getState().openContextMenu(e, schemaMenu(cfg, s.name))}>
+      <TreeRow
+        depth={1 + d}
+        open={open}
+        onClick={() => (focusOnClick ? focus() : setOpen(!open))}
+        onContextMenu={(e) => useStore.getState().openContextMenu(e, schemaMenu(cfg, s.name))}
+      >
         <SchemaIcon className={s.system ? "opacity-50" : "text-fg-2"} />
         <span className={cx("flex-1 truncate", s.system && "text-fg-2")}>{s.name}</span>
-        <span className="shrink-0 text-[11px] text-muted">{s.tables.length || ""}</span>
+        <span className="shrink-0 text-[11px] text-muted group-hover/row:hidden">{s.tables.length || ""}</span>
+        <button
+          title="Focus: show only this schema"
+          onClick={(e) => {
+            e.stopPropagation();
+            focus();
+          }}
+          className="hidden rounded p-0.5 text-muted group-hover/row:block hover:bg-hover hover:text-accent"
+        >
+          <Crosshair size={14} />
+        </button>
       </TreeRow>
       {open &&
         CATEGORIES.map((c) => {
@@ -629,6 +672,7 @@ function CategoryNode({
   items,
   stats,
   d,
+  defaultOpen,
 }: {
   cfg: ConnectionConfig;
   schema: string;
@@ -636,8 +680,9 @@ function CategoryNode({
   items: string[];
   stats?: Record<string, TableStat>;
   d: number;
+  defaultOpen?: boolean;
 }) {
-  const [open, setOpen] = useState(false);
+  const [open, setOpen] = useState(!!defaultOpen);
   const [filter, setFilter] = useState("");
   const { icon: Icon, label, kind } = category;
   const isRelation = kind === "table" || kind === "view" || kind === "matview";
@@ -704,6 +749,230 @@ function CategoryNode({
       )}
       {tip.state && stats?.[tip.state.name] && <TableTip name={tip.state.name} stat={stats[tip.state.name]} anchor={tip.state.el} />}
     </>
+  );
+}
+
+/** One schema alone: breadcrumb with quick switchers, then its objects one level up. */
+function FocusView({ focus }: { focus: TreeFocus }) {
+  const base = useStore((s) => s.connections.find((c) => c.id === baseId(focus.connId)));
+  const state = useStore((s) => s.conn[focus.connId]);
+  const databases = useStore((s) => s.conn[baseId(focus.connId)!]?.databases);
+  const db = dbOf(focus.connId);
+  const cfg = useMemo(() => base && (db ? { ...base, id: focus.connId, database: db } : base), [base, focus.connId, db]);
+  const [menu, setMenu] = useState<"db" | "schema" | null>(null);
+  const closeMenu = useCallback(() => setMenu(null), []);
+  const { setFocus, connectTo } = useStore.getState();
+  const status = state?.status ?? "idle";
+  const schemas = state?.schema?.schemas;
+
+  // focusing a whole database: pick its default schema once loaded
+  useEffect(() => {
+    if (!focus.schema && schemas?.length) setFocus({ ...focus, schema: defaultSchema(schemas) ?? schemas[0].name });
+  }, [focus, schemas, setFocus]);
+
+  if (!base || !cfg) return null;
+  const schema = schemas?.find((s) => s.name === focus.schema);
+  const color = connColor(base);
+  const word = base.kind === "mysql" ? "database" : "schema";
+  const back = () => setFocus({ ...focus, open: false });
+  const menuOf = (items: MenuEntry[]) => (e: React.MouseEvent) => useStore.getState().openContextMenu(e, items);
+  const schemaActions = schema ? menuOf(schemaMenu(cfg, schema.name)) : undefined;
+
+  const openDbMenu = () => {
+    const st = useStore.getState();
+    if (st.conn[base.id]?.status !== "connected") void connectTo(base.id);
+    else if (!databases) void st.loadDatabases(base.id);
+    setMenu("db");
+  };
+
+  return (
+    <div className="flex min-h-0 flex-1 flex-col">
+      <div
+        style={color ? { boxShadow: `inset 3px 0 0 ${color}`, background: tint(color, 0.08) } : undefined}
+        className="relative mx-2 mb-2 rounded-lg border border-line bg-hover/40 p-1"
+      >
+        <div className="flex items-center gap-1">
+          <IconButton title="All connections" onClick={back}>
+            <ArrowLeft size={15} />
+          </IconButton>
+          <button onClick={back} onContextMenu={menuOf(connectionMenu(base))} title="Back to all connections" className="flex min-w-0 flex-1 items-center gap-2 rounded-md px-1.5 py-1 text-left hover:bg-hover">
+            <DbIcon kind={base.kind} size={16} />
+            <span className="truncate text-[13px] text-fg">{base.name}</span>
+            <EnvBadge cfg={base} />
+          </button>
+          {schemaActions && (
+            <IconButton title={`${word[0].toUpperCase()}${word.slice(1)} actions: new query, import, export, ER diagram…`} onClick={schemaActions}>
+              <Ellipsis size={15} />
+            </IconButton>
+          )}
+        </div>
+        {db && <Crumb icon={<Database size={14} className="shrink-0 text-pg" />} label={db} title="Switch database" onClick={openDbMenu} onContextMenu={menuOf(databaseMenu(cfg))} />}
+        <Crumb
+          icon={<SchemaIcon className="text-fg-2" />}
+          label={focus.schema || "…"}
+          hint={schema ? `${schema.tables.length} tables` : undefined}
+          title={`Switch ${word}`}
+          onClick={() => setMenu("schema")}
+          onContextMenu={schemaActions}
+          disabled={!schemas}
+        />
+        {menu === "schema" && schemas && (
+          <Switcher
+            placeholder={`Switch ${word}...`}
+            current={focus.schema}
+            items={schemas.map((s) => ({ key: s.name, label: s.name, hint: s.tables.length ? String(s.tables.length) : "", dim: s.system }))}
+            onPick={(name) => setFocus({ ...focus, schema: name })}
+            onClose={closeMenu}
+          />
+        )}
+        {menu === "db" && (
+          <Switcher
+            placeholder="Switch database..."
+            current={db ?? ""}
+            items={(databases ?? []).filter((d) => d.size !== null).map((d) => ({ key: d.name, label: d.name, hint: formatBytes(d.size!) }))}
+            loading={!databases}
+            onPick={(name) => {
+              const id = subId(base.id, name);
+              if (useStore.getState().conn[id]?.status !== "connected") void connectTo(id);
+              setFocus({ connId: id, schema: "", open: true });
+            }}
+            onClose={closeMenu}
+          />
+        )}
+      </div>
+      <div onContextMenu={schemaActions} className="min-h-0 flex-1 overflow-y-auto px-2 pb-3 text-[13px]">
+        {(status === "idle" || status === "error") && (
+          <div className="px-3 py-2 text-[12px]">
+            {status === "error" ? <p className="selectable mb-1 break-words text-err">{state?.error}</p> : <p className="mb-1 text-muted">Not connected.</p>}
+            <button className="text-accent hover:underline" onClick={() => void connectTo(focus.connId)}>
+              {status === "error" ? "Retry" : "Connect"}
+            </button>
+          </div>
+        )}
+        {status === "connecting" && <Note depth={0} spinner text="Connecting…" />}
+        {status === "connected" && !schemas && <Note depth={0} spinner text="Loading…" />}
+        {status === "connected" && schemas && focus.schema && !schema && <Note depth={0} text={`The ${word} “${focus.schema}” no longer exists.`} />}
+        {status === "connected" &&
+          schema &&
+          CATEGORIES.map((c) => {
+            const items = schema[c.key];
+            if (items.length === 0 && (c.key === "matViews" || c.key === "procedures" || c.key === "triggers")) return null;
+            return (
+              <CategoryNode
+                key={`${focus.connId}/${schema.name}/${c.key}`}
+                cfg={cfg}
+                schema={schema.name}
+                category={c}
+                items={items}
+                stats={schema.tableStats}
+                d={-2}
+                defaultOpen={c.key === "tables"}
+              />
+            );
+          })}
+      </div>
+    </div>
+  );
+}
+
+function Crumb({
+  icon,
+  label,
+  hint,
+  title,
+  onClick,
+  onContextMenu,
+  disabled,
+}: {
+  icon: React.ReactNode;
+  label: string;
+  hint?: string;
+  title: string;
+  onClick: () => void;
+  onContextMenu?: (e: React.MouseEvent) => void;
+  disabled?: boolean;
+}) {
+  return (
+    <button
+      onClick={onClick}
+      onContextMenu={onContextMenu}
+      disabled={disabled}
+      title={title}
+      className="ml-7 flex w-[calc(100%-1.75rem)] items-center gap-2 rounded-md px-1.5 py-1 text-left hover:bg-hover disabled:opacity-60"
+    >
+      {icon}
+      <span className="min-w-0 flex-1 truncate font-medium text-fg">{label}</span>
+      {hint && <span className="shrink-0 text-[11px] text-muted">{hint}</span>}
+      <ChevronsUpDown size={13} className="shrink-0 text-muted" />
+    </button>
+  );
+}
+
+/** Searchable dropdown under the breadcrumb. */
+function Switcher({
+  items,
+  current,
+  placeholder,
+  loading,
+  onPick,
+  onClose,
+}: {
+  items: { key: string; label: string; hint?: string; dim?: boolean }[];
+  current: string;
+  placeholder: string;
+  loading?: boolean;
+  onPick: (key: string) => void;
+  onClose: () => void;
+}) {
+  const [q, setQ] = useState("");
+  const [hi, setHi] = useState(0);
+  const ref = useRef<HTMLDivElement>(null);
+  const input = useRef<HTMLInputElement>(null);
+  const visible = useMemo(() => items.filter((i) => matches(i.label, q)), [items, q]);
+
+  useEffect(() => {
+    input.current?.focus();
+    const down = (e: MouseEvent) => !ref.current?.contains(e.target as Node) && onClose();
+    window.addEventListener("mousedown", down);
+    return () => window.removeEventListener("mousedown", down);
+  }, [onClose]);
+  useEffect(() => setHi(Math.max(0, visible.findIndex((i) => i.key === current))), [visible, current]);
+
+  const pick = (key: string) => {
+    onClose();
+    if (key !== current) onPick(key);
+  };
+  const onKey = (e: React.KeyboardEvent) => {
+    if (e.key === "Escape") onClose();
+    else if (e.key === "ArrowDown") setHi((h) => Math.min(visible.length - 1, h + 1));
+    else if (e.key === "ArrowUp") setHi((h) => Math.max(0, h - 1));
+    else if (e.key === "Enter" && visible[hi]) pick(visible[hi].key);
+    else return;
+    e.preventDefault();
+  };
+
+  return (
+    <div ref={ref} onKeyDown={onKey} className="absolute top-full right-0 left-0 z-30 mt-1 rounded-lg border border-line-strong bg-raised p-1.5 shadow-xl">
+      <SearchInput inputRef={input} value={q} onChange={setQ} placeholder={placeholder} className="h-7" />
+      <div className="mt-1 max-h-72 overflow-y-auto text-[13px]">
+        {loading && <Note depth={0} spinner text="Loading…" />}
+        {visible.slice(0, MAX_ITEMS).map((i, n) => (
+          <div
+            key={i.key}
+            ref={n === hi ? (el) => el?.scrollIntoView({ block: "nearest" }) : undefined}
+            onMouseEnter={() => setHi(n)}
+            onClick={() => pick(i.key)}
+            className={cx("flex h-7 cursor-pointer items-center gap-2 rounded-md px-2", n === hi && "bg-hover")}
+          >
+            <span className={cx("min-w-0 flex-1 truncate", i.key === current ? "font-medium text-accent" : i.dim ? "text-fg-2" : "text-fg")}>
+              <Highlight text={i.label} query={q} />
+            </span>
+            {i.hint && <span className="shrink-0 text-[11px] text-muted">{i.hint}</span>}
+          </div>
+        ))}
+        {!loading && visible.length === 0 && <Note depth={0} text="Nothing matches." />}
+      </div>
+    </div>
   );
 }
 

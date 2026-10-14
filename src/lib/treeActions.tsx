@@ -3,6 +3,7 @@ import {
   ClipboardCopy,
   Code,
   Copy,
+  Crosshair,
   Database,
   DatabaseBackup,
   Eraser,
@@ -241,7 +242,10 @@ export function schemaMenu(cfg: ConnectionConfig, schema: string): MenuEntry[] {
   const word = k === "mysql" ? "database" : "schema";
   const Word = k === "mysql" ? "Database" : "Schema";
   const s = quoteIdent(schema, k);
+  const f = st().focus;
+  const focused = !!f?.open && f.connId === cfg.id && f.schema === schema;
   return [
+    ...(focused ? [] : ([{ label: "Focus", icon: <Crosshair />, onClick: () => st().setFocus({ connId: cfg.id, schema, open: true }) }, "sep"] as MenuEntry[])),
     { label: "New query", icon: <FileCode />, onClick: () => openSql(cfg.id, k === "mysql" ? `USE ${s};\n\n` : `SET search_path TO ${s};\n\n`, `${schema}.sql`) },
     { label: "Create table…", icon: <Plus />, onClick: () => openSql(cfg.id, createTableTemplate(k, schema), "new_table.sql") },
     { label: `Create ${word}…`, icon: <Database />, onClick: () => createSchema(cfg) },
@@ -333,6 +337,7 @@ export function databaseMenu(cfg: ConnectionConfig): MenuEntry[] {
     connected
       ? { label: "Disconnect", icon: <Unplug />, onClick: () => void st().disconnectFrom(cfg.id) }
       : { label: "Connect", icon: <Plug />, onClick: () => void st().connectTo(cfg.id) },
+    { label: "Focus", icon: <Crosshair />, onClick: () => st().setFocus({ connId: cfg.id, schema: "", open: true }) },
     { label: "New query", icon: <FileCode />, onClick: () => st().newTab({ connId: cfg.id, title: `${db}.sql` }) },
     { label: "Refresh", icon: <RefreshCw />, disabled: !connected, onClick: () => void st().refreshSchema(cfg.id) },
     { label: "Create schema…", icon: <Database />, disabled: !connected, onClick: () => createSchema(cfg) },

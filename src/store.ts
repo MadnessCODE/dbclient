@@ -120,6 +120,17 @@ export interface Settings {
   maxRows: number;
   pageSize: number;
   fontSize: number;
+  /** Clicking a schema opens it in the focus view instead of expanding it */
+  focusOnClick?: boolean;
+}
+
+/** One schema shown alone in the left panel; `open` false keeps it to return to from the tree. */
+export interface TreeFocus {
+  /** Connection id, or "<id>::<database>" for a database of a multi-database connection */
+  connId: string;
+  /** Empty while the default schema is picked after connecting */
+  schema: string;
+  open: boolean;
 }
 
 type LeftPanel = "connections";
@@ -183,6 +194,7 @@ interface State {
   projects: Project[];
   conn: Record<string, ConnState>;
   selectedConnId: string | null;
+  focus: TreeFocus | null;
 
   tabs: EditorTab[];
   activeTabId: string | null;
@@ -258,6 +270,7 @@ interface State {
   clearHistory: (tabId?: string) => void;
   toggleTheme: () => void;
   setSettings: (patch: Partial<Settings>) => void;
+  setFocus: (focus: TreeFocus | null) => void;
   setUi: (
     patch: Partial<Pick<State, "leftPanel" | "view" | "connDialog" | "projectDialog" | "paletteOpen" | "settingsOpen" | "aboutOpen" | "resultsMaximized" | "contextMenu" | "actionDialog" | "exportJob" | "importDialog" | "usersDialog" | "usersVersion" | "erDialog" | "dbExport" | "connImport">>,
   ) => void;
@@ -297,6 +310,7 @@ export const useStore = create<State>()(
         projects: [],
         conn: {},
         selectedConnId: null,
+        focus: null,
         tabs: [],
         activeTabId: null,
         runtime: {},
@@ -343,6 +357,8 @@ export const useStore = create<State>()(
           set({ connections, projects, connectionsError: null });
           const sel = get().selectedConnId;
           if (sel && !connections.some((c) => c.id === sel)) set({ selectedConnId: null });
+          const focus = get().focus;
+          if (focus && !connections.some((c) => c.id === baseId(focus.connId))) set({ focus: null });
         },
 
         selectConnection: (id) => set({ selectedConnId: id }),
@@ -424,6 +440,7 @@ export const useStore = create<State>()(
               connections: s.connections.filter((c) => c.id !== id),
               conn,
               selectedConnId: s.selectedConnId === id ? null : s.selectedConnId,
+              focus: baseId(s.focus?.connId) === id ? null : s.focus,
               tabs: s.tabs.map((t) => (baseId(t.connId) === id ? { ...t, connId: null } : t)),
             };
           });
@@ -622,6 +639,7 @@ export const useStore = create<State>()(
         clearHistory: (tabId) => set((s) => ({ history: tabId ? s.history.filter((h) => h.tabId !== tabId) : [] })),
         toggleTheme: () => set((s) => ({ theme: s.theme === "dark" ? "light" : "dark" })),
         setSettings: (patch) => set((s) => ({ settings: { ...s.settings, ...patch } })),
+        setFocus: (focus) => set(focus?.open ? { focus, selectedConnId: baseId(focus.connId) ?? null } : { focus }),
         setUi: (patch) => set(patch),
         openContextMenu: (e, items) => {
           e.preventDefault();
@@ -641,6 +659,7 @@ export const useStore = create<State>()(
         theme: s.theme,
         settings: s.settings,
         selectedConnId: s.selectedConnId,
+        focus: s.focus,
       }),
     },
   ),

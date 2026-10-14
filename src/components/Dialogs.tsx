@@ -178,6 +178,12 @@ export function SettingsDialog() {
             ))}
           </select>
         </Row>
+        <Row label="Clicking a schema" hint="Focus shows only that schema in the left panel.">
+          <select className={field} value={settings.focusOnClick ? "focus" : "expand"} onChange={(e) => setSettings({ focusOnClick: e.target.value === "focus" })}>
+            <option value="expand">Expands it in the tree</option>
+            <option value="focus">Opens it in focus</option>
+          </select>
+        </Row>
         <Row label="Editor font size">
           <select className={field} value={settings.fontSize} onChange={(e) => setSettings({ fontSize: Number(e.target.value) })}>
             {[12, 13, 14, 15, 16, 18].map((n) => (
