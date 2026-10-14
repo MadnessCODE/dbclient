@@ -47,3 +47,69 @@ export function splitTz(v: string): { local: string; tz: string } {
   if (!m) return { local: v.trim(), tz: "" };
   return { local: v.trim().slice(0, m.index).trim(), tz: m[0] };
 }
+
+export type TsUnit = "s" | "ms";
+
+// 2000-01-01 .. 2100-01-01 in seconds
+const TS_MIN = 946_684_800;
+const TS_MAX = 4_102_444_800;
+const INT_TYPE = /^(int|integer|bigint|serial|bigserial|int4|int8)\b/;
+const TS_NAME = /(_at|_on|_ts)$|^ts$|time|date|epoch|created|updated|modified|deleted|expire|last_?(seen|login|active)/i;
+const NOT_TS_NAME = /(^|_)(id|count|cnt|num|qty|size|amount|price|total|bytes)$/i;
+
+/** Unit of an integer that falls in the plausible Unix timestamp range, else null. */
+export function unixTsUnitOf(v: string): TsUnit | null {
+  if (!/^\d{9,13}$/.test(v)) return null;
+  const n = Number(v);
+  if (n >= TS_MIN && n < TS_MAX) return "s";
+  if (n >= TS_MIN * 1000 && n < TS_MAX * 1000) return "ms";
+  return null;
+}
+
+/**
+ * Whether an integer column holds Unix timestamps, judged by its name and the loaded values;
+ * returns the dominant unit (null = not a timestamp column).
+ */
+export function unixTsColumn(name: string, typeName: string, col: StructColumn | null | undefined, values: (string | null | undefined)[]): TsUnit | null {
+  const t = (col?.columnType ?? typeName).toLowerCase().trim();
+  if (!INT_TYPE.test(t) && !INT_TYPE.test(typeName.toLowerCase())) return null;
+  if (col?.autoIncrement || col?.primaryKey || NOT_TS_NAME.test(name)) return null;
+  let s = 0;
+  let ms = 0;
+  let other = 0;
+  for (const v of values) {
+    if (v === null || v === undefined || v === "" || v === "0") continue;
+    const u = unixTsUnitOf(v);
+    if (u === "s") s++;
+    else if (u === "ms") ms++;
+    else other++;
+  }
+  const hits = s + ms;
+  const unit: TsUnit = ms > s ? "ms" : "s";
+  // a suggestive name only needs most values to fit; otherwise the values have to be convincing
+  if (TS_NAME.test(name)) return hits >= other ? unit : null;
+  return hits >= 3 && other === 0 ? unit : null;
+}
+
+const pad2 = (n: number) => String(n).padStart(2, "0");
+
+/** "2025-09-01 10:24:12" in local time (or UTC), with milliseconds when present. */
+export function formatEpoch(ms: number, utc = false): string {
+  const d = new Date(ms);
+  const g = utc
+    ? [d.getUTCFullYear(), d.getUTCMonth() + 1, d.getUTCDate(), d.getUTCHours(), d.getUTCMinutes(), d.getUTCSeconds(), d.getUTCMilliseconds()]
+    : [d.getFullYear(), d.getMonth() + 1, d.getDate(), d.getHours(), d.getMinutes(), d.getSeconds(), d.getMilliseconds()];
+  const frac = g[6] ? `.${String(g[6]).padStart(3, "0")}` : "";
+  return `${g[0]}-${pad2(g[1])}-${pad2(g[2])} ${pad2(g[3])}:${pad2(g[4])}:${pad2(g[5])}${frac}`;
+}
+
+/** Tooltip text for a Unix timestamp cell, or null when the value isn't one. */
+export function unixTsTooltip(v: string, colUnit: TsUnit): string | null {
+  const unit = unixTsUnitOf(v);
+  if (!unit) return null;
+  const ms = unit === "ms" ? Number(v) : Number(v) * 1000;
+  const off = -new Date(ms).getTimezoneOffset();
+  const zone = `UTC${off >= 0 ? "+" : "-"}${pad2(Math.floor(Math.abs(off) / 60))}:${pad2(Math.abs(off) % 60)}`;
+  const note = unit !== colUnit ? ` (${unit === "ms" ? "milliseconds" : "seconds"})` : "";
+  return `${v}${note}\nLocal: ${formatEpoch(ms)} (${zone})\nUTC:   ${formatEpoch(ms, true)}`;
+}

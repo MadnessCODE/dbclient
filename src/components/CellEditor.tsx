@@ -1,8 +1,8 @@
 // In-cell editors by column type: text/number, date/time picker, enum list, SET checkboxes.
 import { useEffect, useRef, useState } from "react";
 import type { Cell, DbKind, StructColumn } from "../lib/api";
-import type { CellKind } from "../lib/cellKind";
-import { DateTimePicker, type DateKind } from "./DateTimePicker";
+import { formatEpoch, unixTsUnitOf, type CellKind, type TsUnit } from "../lib/cellKind";
+import { DateTimePicker, parseDateValue, type DateKind } from "./DateTimePicker";
 import { OptionPicker } from "./OptionPicker";
 import { cx } from "./ui";
 
@@ -18,6 +18,8 @@ interface Props {
   typeName?: string;
   /** Postgres allows -infinity / infinity dates */
   dbKind?: DbKind;
+  /** Integer column holding Unix timestamps in this unit */
+  unixTs?: TsUnit | null;
   onCommit: (v: Cell, move?: Move) => void;
   onCancel: () => void;
 }
@@ -27,6 +29,8 @@ export function CellEditor(props: Props) {
   if (kind === "enum") return <EnumEditor {...props} />;
   if (kind === "set") return <SetEditor {...props} />;
   if (kind === "date" || kind === "datetime" || kind === "time") return <DateTimeEditor {...props} />;
+  // typing a digit edits the raw number
+  if (props.unixTs && props.initial === undefined && (props.value === null || /^\d+$/.test(props.value))) return <UnixTsEditor {...props} />;
   return <TextEditor {...props} />;
 }
 
@@ -91,6 +95,55 @@ function DateTimeEditor({ kind, value, column, typeName, dbKind, onCommit, onCan
           allowInfinity={dbKind === "postgres" && kind !== "time"}
           anchor={anchor}
           onApply={(v) => onCommit(v)}
+          onCancel={onCancel}
+        />
+      )}
+    </div>
+  );
+}
+
+/** Local "+02:00" offset for an instant. */
+function offsetAt(ms: number) {
+  const min = -new Date(ms).getTimezoneOffset();
+  const p = (n: number) => String(n).padStart(2, "0");
+  return `${min >= 0 ? "+" : "-"}${p(Math.floor(Math.abs(min) / 60))}:${p(Math.abs(min) % 60)}`;
+}
+
+/** Integer Unix timestamp edited with the datetime picker (local time, zone selectable). */
+function UnixTsEditor({ value, unixTs, onCommit, onCancel }: Props) {
+  const ref = useRef<HTMLDivElement>(null);
+  const [anchor, setAnchor] = useState<HTMLElement | null>(null);
+  useEffect(() => setAnchor(ref.current), []);
+  const unit: TsUnit = (value && unixTsUnitOf(value)) || unixTs || "s";
+  const ms = value ? Number(value) * (unit === "s" ? 1000 : 1) : null;
+  const shown = ms === null ? null : `${formatEpoch(ms)}${offsetAt(ms)}`;
+  const toEpoch = (v: string | null): Cell | undefined => {
+    if (v === null) return null;
+    if (/^\d+$/.test(v.trim())) return v.trim();
+    const p = parseDateValue("datetime", v);
+    if (!p) return undefined;
+    const m = /^([+-])(\d{2}):(\d{2})$/.exec(p.tz ?? "");
+    const offMin = m ? (m[1] === "-" ? -1 : 1) * (Number(m[2]) * 60 + Number(m[3])) : null;
+    const frac = Number(`0.${p.frac || "0"}`) * 1000;
+    const wall = Date.UTC(p.y, p.m - 1, p.d, p.h, p.mi, p.s) + Math.round(frac);
+    // without a zone the value is local time
+    const t = offMin === null ? new Date(p.y, p.m - 1, p.d, p.h, p.mi, p.s, Math.round(frac)).getTime() : wall - offMin * 60_000;
+    return String(unit === "s" ? Math.floor(t / 1000) : t);
+  };
+  return (
+    <div ref={ref} className={box} onMouseDown={(e) => e.stopPropagation()} onDoubleClick={(e) => e.stopPropagation()}>
+      <span className="truncate px-1.5 font-mono text-[12.5px] text-fg">{value ?? "NULL"}</span>
+      {anchor && (
+        <DateTimePicker
+          kind="datetime"
+          withTz
+          value={shown}
+          anchor={anchor}
+          onApply={(v) => {
+            const next = toEpoch(v);
+            if (next === undefined || next === value) onCancel();
+            else onCommit(next);
+          }}
           onCancel={onCancel}
         />
       )}

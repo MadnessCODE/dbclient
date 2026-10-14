@@ -25,7 +25,7 @@ import {
   X,
 } from "lucide-react";
 import { api, errorText, type Cell, type ColumnRef, type DbKind, type ResultSet, type TableStructure } from "../lib/api";
-import { cellKind, isTruthy, type CellKind } from "../lib/cellKind";
+import { cellKind, isTruthy, unixTsColumn, unixTsTooltip, type CellKind, type TsUnit } from "../lib/cellKind";
 import { isProduction } from "../lib/connStyle";
 import { buildDml, editTargetOf, emptyPending, pendingCount, type EditTarget, type PendingEdits, type RowKey } from "../lib/edit";
 import { quoteIdent } from "../lib/sql";
@@ -141,6 +141,13 @@ export function DataGrid({ rs, connId, kind, tabId }: { rs: ResultSet; connId: s
   const colMap = editable ? target.colMap : rs.columns.map(() => null);
   const kinds: CellKind[] = useMemo(() => rs.columns.map((c, i) => cellKind(c.typeName, colMap[i])), [rs.columns, colMap]);
   const numeric = useMemo(() => kinds.map((k) => k === "number"), [kinds]);
+  const tsUnits: (TsUnit | null)[] = useMemo(
+    () =>
+      rs.columns.map((c, i) =>
+        kinds[i] === "number" ? unixTsColumn(c.name, c.typeName, colMap[i], rs.rows.slice(0, 500).map((row) => row[i])) : null,
+      ),
+    [rs.columns, rs.rows, kinds, colMap],
+  );
   const colEditable = (c: number) => editable && !!colMap[c] && kinds[c] !== "binary";
 
   // with a LIMIT or the Max rows cap only part of the data is loaded: sort in the database
@@ -682,7 +689,15 @@ export function DataGrid({ rs, connId, kind, tabId }: { rs: ResultSet; connId: s
                         onMouseEnter={() => drag.current === "cells" && select(r, ci, true, false)}
                         onDoubleClick={() => (colEditable(ci) ? startEdit(r, ci) : setModal({ r, c: ci }))}
                         onContextMenu={(e) => cellMenu(e, r, ci)}
-                        title={value === null ? "NULL (no value)" : value === undefined ? "DEFAULT" : value === "" ? "Empty string" : value}
+                        title={
+                          value === null
+                            ? "NULL (no value)"
+                            : value === undefined
+                              ? "DEFAULT"
+                              : value === ""
+                                ? "Empty string"
+                                : ((tsUnits[ci] && unixTsTooltip(value, tsUnits[ci]!)) ?? value)
+                        }
                         style={{ width: widths[ci] }}
                         className={cx(
                           "relative flex shrink-0 items-center gap-1 border-l border-transparent px-3",
@@ -711,6 +726,7 @@ export function DataGrid({ rs, connId, kind, tabId }: { rs: ResultSet; connId: s
                             column={colMap[ci]}
                             typeName={col.typeName}
                             dbKind={kind}
+                            unixTs={tsUnits[ci]}
                             onCommit={commitEdit}
                             onCancel={() => {
                               setEditing(null);
