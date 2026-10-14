@@ -279,16 +279,16 @@ select optgroup {
   }
 }
 
-/* Import: active worker lane */
+/* Import: active worker lane. Stripes are a 20px tile that repeats seamlessly; the animation moves one tile. */
 .lane-on {
-  background: repeating-linear-gradient(-45deg, color-mix(in srgb, var(--accent) 55%, transparent) 0 7px, color-mix(in srgb, var(--accent) 30%, transparent) 7px 14px);
-  background-size: 200% 100%;
-  animation: lane-flow 0.9s linear infinite;
+  background: linear-gradient(-45deg, color-mix(in srgb, var(--accent) 55%, transparent) 25%, color-mix(in srgb, var(--accent) 30%, transparent) 25% 50%, color-mix(in srgb, var(--accent) 55%, transparent) 50% 75%, color-mix(in srgb, var(--accent) 30%, transparent) 75%);
+  background-size: 20px 20px;
+  animation: lane-flow 0.65s linear infinite;
   box-shadow: 0 0 12px color-mix(in srgb, var(--accent) 35%, transparent);
 }
 .lane-main {
-  background: repeating-linear-gradient(-45deg, rgb(167 139 250 / 0.55) 0 7px, rgb(167 139 250 / 0.3) 7px 14px);
-  background-size: 200% 100%;
+  background: linear-gradient(-45deg, rgb(167 139 250 / 0.55) 25%, rgb(167 139 250 / 0.3) 25% 50%, rgb(167 139 250 / 0.55) 50% 75%, rgb(167 139 250 / 0.3) 75%);
+  background-size: 20px 20px;
   box-shadow: 0 0 12px rgb(167 139 250 / 0.35);
 }
 .lane-dot {
@@ -301,7 +301,7 @@ select optgroup {
 }
 @keyframes lane-flow {
   to {
-    background-position: -28px 0;
+    background-position: -20px 0;
   }
 }
 @keyframes lane-sweep {
