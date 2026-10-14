@@ -1,5 +1,6 @@
 // Results grid: typed rendering, sorting, Excel-like selection and transactional edits.
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { ask } from "@tauri-apps/plugin-dialog";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import {
@@ -12,6 +13,7 @@ import {
   ChevronRight,
   ClipboardCopy,
   ClipboardPaste,
+  Clock,
   Copy,
   Eraser,
   Link2,
@@ -25,7 +27,7 @@ import {
   X,
 } from "lucide-react";
 import { api, errorText, type Cell, type ColumnRef, type DbKind, type ResultSet, type TableStructure } from "../lib/api";
-import { cellKind, isTruthy, unixTsColumn, unixTsTooltip, type CellKind, type TsUnit } from "../lib/cellKind";
+import { cellKind, isTruthy, relativeTime, unixTsColumn, unixTsInfo, type CellKind, type TsUnit } from "../lib/cellKind";
 import { isProduction } from "../lib/connStyle";
 import { buildDml, editTargetOf, emptyPending, pendingCount, type EditTarget, type PendingEdits, type RowKey } from "../lib/edit";
 import { quoteIdent } from "../lib/sql";
@@ -148,6 +150,7 @@ export function DataGrid({ rs, connId, kind, tabId }: { rs: ResultSet; connId: s
       ),
     [rs.columns, rs.rows, kinds, colMap],
   );
+  const tsTip = useTsTip();
   const colEditable = (c: number) => editable && !!colMap[c] && kinds[c] !== "binary";
 
   // with a LIMIT or the Max rows cap only part of the data is loaded: sort in the database
@@ -686,7 +689,11 @@ export function DataGrid({ rs, connId, kind, tabId }: { rs: ResultSet; connId: s
                           drag.current = "cells";
                           select(r, ci, e.shiftKey, e.ctrlKey || e.metaKey);
                         }}
-                        onMouseEnter={() => drag.current === "cells" && select(r, ci, true, false)}
+                        onMouseEnter={(e) => {
+                          if (drag.current === "cells") select(r, ci, true, false);
+                          else if (tsUnits[ci] && typeof value === "string" && !isEditing) tsTip.show(value, e.currentTarget, ci);
+                        }}
+                        onMouseLeave={tsTip.hide}
                         onDoubleClick={() => (colEditable(ci) ? startEdit(r, ci) : setModal({ r, c: ci }))}
                         onContextMenu={(e) => cellMenu(e, r, ci)}
                         title={
@@ -696,7 +703,9 @@ export function DataGrid({ rs, connId, kind, tabId }: { rs: ResultSet; connId: s
                               ? "DEFAULT"
                               : value === ""
                                 ? "Empty string"
-                                : ((tsUnits[ci] && unixTsTooltip(value, tsUnits[ci]!)) ?? value)
+                                : tsUnits[ci] && unixTsInfo(value)
+                                  ? undefined
+                                  : value
                         }
                         style={{ width: widths[ci] }}
                         className={cx(
@@ -755,6 +764,7 @@ export function DataGrid({ rs, connId, kind, tabId }: { rs: ResultSet; connId: s
           </div>
         </div>
       </div>
+      {tsTip.state && !editing && <TsTip value={tsTip.state.value} anchor={tsTip.state.el} editable={colEditable(tsTip.state.c)} />}
       <Pagination
         page={safePage}
         pages={pages}
@@ -818,6 +828,68 @@ export function DataGrid({ rs, connId, kind, tabId }: { rs: ResultSet; connId: s
   );
 }
 
+
+/** Delayed hover tip for Unix timestamp cells; clicks and scrolling hide it. */
+function useTsTip() {
+  const [state, setState] = useState<{ value: string; el: HTMLElement; c: number } | null>(null);
+  const timer = useRef<number | undefined>(undefined);
+  const hide = useCallback(() => {
+    clearTimeout(timer.current);
+    setState(null);
+  }, []);
+  const show = (value: string, el: HTMLElement, c: number) => {
+    clearTimeout(timer.current);
+    if (!unixTsInfo(value)) return setState(null);
+    timer.current = window.setTimeout(() => setState({ value, el, c }), 350);
+  };
+  useEffect(() => {
+    if (!state) return;
+    window.addEventListener("mousedown", hide, true);
+    window.addEventListener("wheel", hide, true);
+    return () => {
+      window.removeEventListener("mousedown", hide, true);
+      window.removeEventListener("wheel", hide, true);
+    };
+  }, [state, hide]);
+  useEffect(() => () => clearTimeout(timer.current), []);
+  return { state, show, hide };
+}
+
+function TsTip({ value, anchor, editable }: { value: string; anchor: HTMLElement; editable: boolean }) {
+  const info = unixTsInfo(value);
+  if (!info) return null;
+  const r = anchor.getBoundingClientRect();
+  const W = 270;
+  const H = editable ? 170 : 140;
+  const below = r.bottom + 6 + H <= window.innerHeight;
+  const [date, time] = info.local.split(" ");
+  return createPortal(
+    <div
+      style={{ left: Math.max(8, Math.min(r.left, window.innerWidth - W - 8)), top: below ? r.bottom + 6 : Math.max(8, r.top - H - 6), width: W }}
+      className="pointer-events-none fixed z-[80] animate-[tip-in_140ms_ease-out] rounded-xl border border-line-strong bg-raised p-3 shadow-2xl shadow-black/50"
+    >
+      <div className="flex items-center gap-2 text-[11.5px] text-muted">
+        <Clock size={13} className="shrink-0 text-accent" />
+        <span>Unix timestamp · {info.unit === "ms" ? "milliseconds" : "seconds"}</span>
+      </div>
+      <div className="mt-2 flex items-baseline gap-2">
+        <span className="text-[17px] font-semibold tabular-nums leading-none text-fg">{date}</span>
+        <span className="text-[15px] tabular-nums leading-none text-fg-2">{time}</span>
+      </div>
+      <div className="mt-1 text-[11.5px] text-muted">{relativeTime(info.ms)}</div>
+      <div className="mt-2.5 grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 text-[11.5px]">
+        <span className="text-muted">Local</span>
+        <span className="font-mono text-fg tabular-nums">
+          {info.local} <span className="text-muted">{info.zone}</span>
+        </span>
+        <span className="text-muted">UTC</span>
+        <span className="font-mono text-fg tabular-nums">{info.utc}</span>
+      </div>
+      {editable && <div className="mt-2.5 border-t border-line pt-2 text-[11px] text-muted">Double-click to pick a date</div>}
+    </div>,
+    document.body,
+  );
+}
 
 /** Typed rendering: NULL badge, ✓/✗, colored JSON, enum badge, ↵ for newlines, swatch for #colors. */
 export function CellDisplay({ value, kind }: { value: Cell | undefined; kind: CellKind }) {

@@ -103,13 +103,37 @@ export function formatEpoch(ms: number, utc = false): string {
   return `${g[0]}-${pad2(g[1])}-${pad2(g[2])} ${pad2(g[3])}:${pad2(g[4])}:${pad2(g[5])}${frac}`;
 }
 
-/** Tooltip text for a Unix timestamp cell, or null when the value isn't one. */
-export function unixTsTooltip(v: string, colUnit: TsUnit): string | null {
+export interface UnixTsInfo {
+  unit: TsUnit;
+  ms: number;
+  local: string;
+  utc: string;
+  /** "UTC+02:00" */
+  zone: string;
+}
+
+/** Converted Unix timestamp, or null when the value isn't one. */
+export function unixTsInfo(v: string): UnixTsInfo | null {
   const unit = unixTsUnitOf(v);
   if (!unit) return null;
   const ms = unit === "ms" ? Number(v) : Number(v) * 1000;
   const off = -new Date(ms).getTimezoneOffset();
   const zone = `UTC${off >= 0 ? "+" : "-"}${pad2(Math.floor(Math.abs(off) / 60))}:${pad2(Math.abs(off) % 60)}`;
-  const note = unit !== colUnit ? ` (${unit === "ms" ? "milliseconds" : "seconds"})` : "";
-  return `${v}${note}\nLocal: ${formatEpoch(ms)} (${zone})\nUTC:   ${formatEpoch(ms, true)}`;
+  return { unit, ms, local: formatEpoch(ms), utc: formatEpoch(ms, true), zone };
+}
+
+/** "3 days ago" / "in 2 hours". */
+export function relativeTime(ms: number, now = Date.now()): string {
+  const sec = Math.round((ms - now) / 1000);
+  const steps: [Intl.RelativeTimeFormatUnit, number][] = [
+    ["year", 31_536_000],
+    ["month", 2_592_000],
+    ["week", 604_800],
+    ["day", 86_400],
+    ["hour", 3_600],
+    ["minute", 60],
+  ];
+  const rtf = new Intl.RelativeTimeFormat("en", { numeric: "auto" });
+  for (const [u, n] of steps) if (Math.abs(sec) >= n) return rtf.format(Math.trunc(sec / n), u);
+  return rtf.format(sec, "second");
 }
