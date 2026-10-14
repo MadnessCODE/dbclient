@@ -22,7 +22,8 @@ use tokio::sync::{mpsc, watch};
 
 use crate::autotune::{self, Gate, Sample, Tuner};
 use crate::db::DbPool;
-use crate::dump::{classify, copy_table, strip_definer, Kind, Piece, Splitter};
+use crate::pgcustom;
+use crate::dump::{classify, copy_table, is_owner_change, strip_definer, Kind, LargeObjects, Lo, Piece, Splitter};
 use crate::error::{msg, AppResult};
 
 /// INSERT text per job (one transaction).
@@ -49,6 +50,9 @@ pub struct ImportOptions {
     /// MySQL: strip DEFINER=... from views, triggers and routines.
     #[serde(default)]
     pub strip_definer: bool,
+    /// Postgres: leave out ALTER ... OWNER TO and SET SESSION AUTHORIZATION (pg_restore --no-owner).
+    #[serde(default)]
+    pub skip_owner: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -407,13 +411,24 @@ impl<R: Read> Read for Counting<R> {
     }
 }
 
+impl<R: std::io::Seek> std::io::Seek for Counting<R> {
+    fn seek(&mut self, pos: std::io::SeekFrom) -> std::io::Result<u64> {
+        self.inner.seek(pos)
+    }
+}
+
 fn open_reader(path: &str, shared: Arc<Shared>) -> std::io::Result<Box<dyn BufRead + Send>> {
     let mut file = std::fs::File::open(path)?;
-    let mut magic = [0u8; 2];
-    let gz = file.read(&mut magic)? == 2 && magic == [0x1f, 0x8b];
+    let mut magic = [0u8; 5];
+    let n = read_full(&mut file, &mut magic)?;
+    let gz = n >= 2 && magic[..2] == [0x1f, 0x8b];
     use std::io::Seek;
     file.seek(std::io::SeekFrom::Start(0))?;
     let counted = Counting { inner: file, shared };
+    if magic[..n] == *pgcustom::MAGIC {
+        // pg_dump custom format: read the (seekable) file as the script pg_restore would print
+        return Ok(Box::new(BufReader::with_capacity(1 << 20, pgcustom::Script::new(BufReader::with_capacity(1 << 20, counted))?)));
+    }
     Ok(if gz {
         Box::new(BufReader::with_capacity(1 << 20, flate2::read::MultiGzDecoder::new(BufReader::with_capacity(1 << 20, counted))))
     } else {
@@ -574,7 +589,8 @@ pub async fn run(on_progress: OnProgress, imports: &Imports, pool: &DbPool, job_
     };
 
     let strip = mysql && o.strip_definer;
-    let result = dispatch(&mut control, &shared, &job_tx, &mut piece_rx, strip).await;
+    let skip_owner = !mysql && o.skip_owner;
+    let result = dispatch(&mut control, &shared, &job_tx, &mut piece_rx, strip, skip_owner).await;
     drop(job_tx);
     drop(piece_rx);
     shared.wait_all().await;
@@ -649,9 +665,10 @@ async fn tune(shared: Arc<Shared>, gate: Arc<Gate>, max: usize) {
 }
 
 /// Walks the dump in order, deciding what runs in parallel and what waits.
-async fn dispatch(control: &mut Conn, shared: &Arc<Shared>, jobs: &mpsc::Sender<Job>, pieces: &mut mpsc::Receiver<Piece>, strip: bool) -> AppResult<()> {
+async fn dispatch(control: &mut Conn, shared: &Arc<Shared>, jobs: &mpsc::Sender<Job>, pieces: &mut mpsc::Receiver<Piece>, strip: bool, skip_owner: bool) -> AppResult<()> {
     let mut batch: Option<(String, Vec<(String, u64)>, usize, u64)> = None; // table, statements, bytes, rows
     let mut control_applied = 0;
+    let mut large_objects = LargeObjects::default();
 
     async fn send(shared: &Shared, jobs: &mpsc::Sender<Job>, job: Job) {
         shared.start(&job.key());
@@ -678,49 +695,63 @@ async fn dispatch(control: &mut Conn, shared: &Arc<Shared>, jobs: &mpsc::Sender<
                 let session = shared.session.read().unwrap().len();
                 send(shared, jobs, Job::Copy { table, header, data, rows, line, session }).await;
             }
-            Piece::Stmt { sql, line } => match classify(&sql) {
-                Kind::Data(table) => {
-                    if batch.as_ref().is_some_and(|b| b.0 != table) {
-                        flush(shared, jobs, &mut batch).await;
-                    }
-                    let b = batch.get_or_insert_with(|| {
-                        *shared.table.lock().unwrap() = table.clone();
-                        (table, Vec::new(), 0, 0)
-                    });
-                    b.2 += sql.len();
-                    b.3 += tuple_count(&sql);
-                    b.1.push((sql, line));
-                    if b.2 >= BATCH_BYTES || b.1.len() >= BATCH_STMTS {
-                        flush(shared, jobs, &mut batch).await;
-                    }
-                }
-                Kind::Session => {
-                    flush(shared, jobs, &mut batch).await;
-                    run_control(control, shared, &mut control_applied, &sql, line).await;
-                    shared.session.write().unwrap().push(sql);
-                    control_applied += 1;
-                }
-                Kind::Skip => {
+            Piece::Stmt { sql, line } => {
+                if skip_owner && is_owner_change(&sql) {
                     shared.raw_done.fetch_add(sql.len() as u64, Ordering::Relaxed);
+                    continue;
                 }
-                Kind::TableDdl(table) => {
-                    flush(shared, jobs, &mut batch).await;
-                    shared.wait(&[format!("d:{table}"), format!("i:{table}")]).await;
-                    run_control(control, shared, &mut control_applied, &sql, line).await;
+                let sql = match large_objects.rewrite(&sql) {
+                    Lo::Keep => sql,
+                    Lo::Run(put) => put,
+                    Lo::Skip => {
+                        shared.raw_done.fetch_add(sql.len() as u64, Ordering::Relaxed);
+                        continue;
+                    }
+                };
+                match classify(&sql) {
+                    Kind::Data(table) => {
+                        if batch.as_ref().is_some_and(|b| b.0 != table) {
+                            flush(shared, jobs, &mut batch).await;
+                        }
+                        let b = batch.get_or_insert_with(|| {
+                            *shared.table.lock().unwrap() = table.clone();
+                            (table, Vec::new(), 0, 0)
+                        });
+                        b.2 += sql.len();
+                        b.3 += tuple_count(&sql);
+                        b.1.push((sql, line));
+                        if b.2 >= BATCH_BYTES || b.1.len() >= BATCH_STMTS {
+                            flush(shared, jobs, &mut batch).await;
+                        }
+                    }
+                    Kind::Session => {
+                        flush(shared, jobs, &mut batch).await;
+                        run_control(control, shared, &mut control_applied, &sql, line).await;
+                        shared.session.write().unwrap().push(sql);
+                        control_applied += 1;
+                    }
+                    Kind::Skip => {
+                        shared.raw_done.fetch_add(sql.len() as u64, Ordering::Relaxed);
+                    }
+                    Kind::TableDdl(table) => {
+                        flush(shared, jobs, &mut batch).await;
+                        shared.wait(&[format!("d:{table}"), format!("i:{table}")]).await;
+                        run_control(control, shared, &mut control_applied, &sql, line).await;
+                    }
+                    Kind::Index(table) => {
+                        flush(shared, jobs, &mut batch).await;
+                        shared.wait(&[format!("d:{table}")]).await;
+                        let session = shared.session.read().unwrap().len();
+                        send(shared, jobs, Job::Index { table, sql, line, session }).await;
+                    }
+                    Kind::Other => {
+                        flush(shared, jobs, &mut batch).await;
+                        shared.wait_all().await;
+                        let sql = if strip { strip_definer(&sql).unwrap_or(sql) } else { sql };
+                        run_control(control, shared, &mut control_applied, &sql, line).await;
+                    }
                 }
-                Kind::Index(table) => {
-                    flush(shared, jobs, &mut batch).await;
-                    shared.wait(&[format!("d:{table}")]).await;
-                    let session = shared.session.read().unwrap().len();
-                    send(shared, jobs, Job::Index { table, sql, line, session }).await;
-                }
-                Kind::Other => {
-                    flush(shared, jobs, &mut batch).await;
-                    shared.wait_all().await;
-                    let sql = if strip { strip_definer(&sql).unwrap_or(sql) } else { sql };
-                    run_control(control, shared, &mut control_applied, &sql, line).await;
-                }
-            },
+            }
         }
     }
     if !shared.stopped() {
@@ -766,6 +797,8 @@ pub struct DumpInfo {
     pub dialect: Option<String>,
     /// What the file is when it isn't SQL, e.g. "PNG image"
     pub detected: Option<String>,
+    /// pg_dump custom format archive, e.g. "pg_dump 16.4 · gzip · 12 tables"
+    pub archive: Option<String>,
 }
 
 /// Sniffs the start of the file (unpacking .gz) to tell what it is.
@@ -775,6 +808,24 @@ pub fn inspect(path: &str) -> std::io::Result<DumpInfo> {
     let mut head = vec![0u8; 64 * 1024];
     let n = read_full(&mut file, &mut head)?;
     head.truncate(n);
+    if head.starts_with(pgcustom::MAGIC) {
+        let archive = pgcustom::read_archive(&mut BufReader::new(std::fs::File::open(path)?));
+        return Ok(match archive {
+            Ok(a) => {
+                let tables = a.tables();
+                let h = &a.header;
+                DumpInfo {
+                    size,
+                    gzip: false,
+                    text: true,
+                    dialect: Some("postgres".into()),
+                    detected: None,
+                    archive: Some(format!("pg_dump {} · {} · {tables} table{}", h.dump_version, h.compression.label(), if tables == 1 { "" } else { "s" })),
+                }
+            }
+            Err(e) => DumpInfo { size, gzip: false, text: false, dialect: None, detected: Some(format!("This pg_dump archive can't be imported: {e}.")), archive: None },
+        });
+    }
     let gzip = head.starts_with(&[0x1f, 0x8b]);
     if gzip {
         let mut dec = flate2::read::MultiGzDecoder::new(std::fs::File::open(path)?);
@@ -791,7 +842,7 @@ pub fn inspect(path: &str) -> std::io::Result<DumpInfo> {
         bad <= 1 + head.len() / 1000
     };
     let dialect = text.then(|| dialect(&String::from_utf8_lossy(&head))).flatten().map(str::to_owned);
-    Ok(DumpInfo { size, gzip, text, dialect, detected })
+    Ok(DumpInfo { size, gzip, text, dialect, detected, archive: None })
 }
 
 fn read_full(r: &mut impl Read, buf: &mut [u8]) -> std::io::Result<usize> {
@@ -807,7 +858,6 @@ fn read_full(r: &mut impl Read, buf: &mut [u8]) -> std::io::Result<usize> {
 
 fn magic(b: &[u8]) -> Option<&'static str> {
     let known: &[(&[u8], &str)] = &[
-        (b"PGDMP", "pg_dump custom/directory format"),
         (b"\x89PNG", "PNG image"),
         (b"\xff\xd8\xff", "JPEG image"),
         (b"GIF8", "GIF image"),

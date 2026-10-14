@@ -50,6 +50,7 @@ function Wizard({ initialConn, initialDb, onClose }: { initialConn: string | nul
   const [fast, setFast] = useState(true);
   const [continueOnError, setContinueOnError] = useState(false);
   const [stripDefiner, setStripDefiner] = useState(true);
+  const [skipOwner, setSkipOwner] = useState(true);
   const [prodOk, setProdOk] = useState(false);
 
   const [fileError, setFileError] = useState<string | null>(null);
@@ -115,6 +116,7 @@ function Wizard({ initialConn, initialDb, onClose }: { initialConn: string | nul
       database: mysql ? database.trim() || null : null,
       createDatabase: mysql && newDb,
       stripDefiner: mysql && stripDefiner,
+      skipOwner: !mysql && skipOwner,
     };
     void startImport(
       { kind: "dump", title: file.name, target: `${cfg.name}${mysql && database ? ` / ${database}` : dbOf(connId) ? ` / ${dbOf(connId)}` : ""}`, connId, workers: options.workers, fileSize: file.size },
@@ -165,11 +167,8 @@ function Wizard({ initialConn, initialDb, onClose }: { initialConn: string | nul
                   <OctagonX size={40} className="text-err" />
                   <div className="text-[16px] font-semibold text-fg">{file.name}</div>
                   <div className="max-w-[460px] text-[13px] leading-relaxed text-fg-2">
-                    {file.detected === "pg_dump custom/directory format" ? (
-                      <>
-                        This is a <b className="text-fg">pg_dump custom format</b> file. Make the dump in plain SQL format instead:{" "}
-                        <code className="text-fg">pg_dump --format=plain mydb &gt; dump.sql</code>
-                      </>
+                    {file.detected?.startsWith("This pg_dump archive") ? (
+                      file.detected
                     ) : (
                       <>
                         This doesn&apos;t look like an SQL file
@@ -192,10 +191,10 @@ function Wizard({ initialConn, initialDb, onClose }: { initialConn: string | nul
                   <FileCode2 size={40} className="text-accent" />
                   <div className="text-[16px] font-semibold text-fg">{file.name}</div>
                   <div className="text-[13px] text-fg-2">
-                    {formatBytes(file.size)} · {file.gzip ? "gzip compressed" : "plain text"}
+                    {formatBytes(file.size)} · {file.archive ?? (file.gzip ? "gzip compressed" : "plain text")}
                   </div>
                   <span className="rounded-full border border-line-strong bg-panel-2 px-2.5 py-0.5 text-[12px] text-fg-2">
-                    {file.dialect ? `Looks like a ${DIALECT_LABEL[file.dialect]}` : "SQL script"}
+                    {file.archive ? "pg_dump custom format (pg_restore not needed)" : file.dialect ? `Looks like a ${DIALECT_LABEL[file.dialect]}` : "SQL script"}
                   </span>
                   <div className="text-[12px] text-accent">Click to choose another file</div>
                 </>
@@ -303,6 +302,14 @@ function Wizard({ initialConn, initialDb, onClose }: { initialConn: string | nul
                     onChange={setStripDefiner}
                     label="Remove DEFINER from views, triggers and routines"
                     hint="Dumps made by another user (often root) fail without admin rights. Objects will belong to your user instead."
+                  />
+                )}
+                {!mysql && (
+                  <Toggle
+                    checked={skipOwner}
+                    onChange={setSkipOwner}
+                    label="Skip ownership (ALTER … OWNER TO)"
+                    hint="Like pg_restore --no-owner: the dump's roles (often postgres) don't have to exist here. Objects will belong to your user instead."
                   />
                 )}
               </Section>

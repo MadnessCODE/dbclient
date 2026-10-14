@@ -268,6 +268,7 @@ export interface ImportOptions {
   database: string | null;
   createDatabase: boolean;
   stripDefiner: boolean;
+  skipOwner: boolean;
 }
 
 export interface ImportError {
@@ -355,6 +356,8 @@ export interface DumpInfo {
   text: boolean;
   dialect: "mysql" | "postgres" | null;
   detected: string | null;
+  /** pg_dump custom format archive, e.g. "pg_dump 16.4 · gzip · 12 tables" */
+  archive: string | null;
 }
 
 export interface ImportSummary {

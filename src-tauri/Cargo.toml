@@ -38,6 +38,8 @@ russh = { version = "0.64", default-features = false, features = ["ring", "rsa",
 tauri-plugin-notification = "2"
 rust_xlsxwriter = "0.99.1"
 flate2 = "1"
+zstd = "0.13"
+lz4_flex = "0.11"
 csv = "1.4.0"
 calamine = "0.36.1"
 encoding_rs = "0.8.42"

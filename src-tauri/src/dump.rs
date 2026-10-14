@@ -293,8 +293,8 @@ fn starts_with_ci(s: &[u8], prefix: &[u8]) -> bool {
 }
 
 fn is_copy_from_stdin(sql: &str) -> bool {
-    let t = tokens(sql, 40);
-    t.first().is_some_and(|w| w.up == "COPY") && t.windows(2).any(|w| w[0].up == "FROM" && w[1].up == "STDIN")
+    // the column list of a wide table is long, so read the whole header (only for COPY)
+    tokens(sql, 1).first().is_some_and(|w| w.up == "COPY") && tokens(sql, usize::MAX).windows(2).any(|w| w[0].up == "FROM" && w[1].up == "STDIN")
 }
 
 
@@ -538,6 +538,88 @@ fn account_end(b: &[u8], start: usize) -> Option<usize> {
     Some(end)
 }
 
+/// `ALTER ... OWNER TO role` and `SET SESSION AUTHORIZATION`, which pg_restore --no-owner leaves out.
+/// They fail when the dump's roles don't exist on this server.
+pub fn is_owner_change(sql: &str) -> bool {
+    let head = tokens(sql, 3);
+    let up = |i: usize| head.get(i).map(|x| x.up.as_str()).unwrap_or("");
+    if up(0) == "SET" && up(1) == "SESSION" && up(2) == "AUTHORIZATION" {
+        return true;
+    }
+    if up(0) != "ALTER" {
+        return false;
+    }
+    let t = tokens(sql, usize::MAX);
+    let n = t.len();
+    // not "ALTER TABLE t RENAME owner TO x"
+    n >= 4 && t[n - 3].up == "OWNER" && t[n - 2].up == "TO" && !t.iter().any(|x| x.up == "RENAME")
+}
+
+/// pg_dump writes large object data as `lo_open` + `lowrite(0, ...)` + `lo_close(0)` inside
+/// BEGIN/COMMIT. The importer runs in autocommit, where descriptor 0 is gone after `lo_open`, so
+/// the writes become `lo_put` at the tracked offset.
+#[derive(Default)]
+pub struct LargeObjects {
+    oid: Option<String>,
+    offset: u64,
+}
+
+#[derive(Debug, PartialEq)]
+pub enum Lo {
+    /// Not a large object statement
+    Keep,
+    Skip,
+    Run(String),
+}
+
+impl LargeObjects {
+    pub fn rewrite(&mut self, sql: &str) -> Lo {
+        let t = tokens(sql, 4);
+        if t.len() < 4 || t[0].up != "SELECT" || t[1].up != "PG_CATALOG" || t[2].up != "." {
+            return Lo::Keep;
+        }
+        let Some(args) = call_args(sql, &t[3].raw) else { return Lo::Keep };
+        match t[3].up.as_str() {
+            "LO_OPEN" => {
+                let Some((oid, _)) = args.split_once(',') else { return Lo::Keep };
+                let oid = oid.trim().trim_matches('\'');
+                if oid.is_empty() || !oid.bytes().all(|b| b.is_ascii_digit()) {
+                    return Lo::Keep;
+                }
+                self.oid = Some(oid.to_owned());
+                self.offset = 0;
+                Lo::Skip
+            }
+            "LOWRITE" => {
+                let (Some(oid), Some((fd, data))) = (&self.oid, args.split_once(',')) else { return Lo::Keep };
+                let data = data.trim();
+                let Some(len) = (fd.trim() == "0").then(|| hex_bytea_len(data)).flatten() else { return Lo::Keep };
+                let sql = format!("SELECT pg_catalog.lo_put('{oid}', {}, {data})", self.offset);
+                self.offset += len;
+                Lo::Run(sql)
+            }
+            "LO_CLOSE" if self.oid.is_some() && args.trim() == "0" => {
+                self.oid = None;
+                Lo::Skip
+            }
+            _ => Lo::Keep,
+        }
+    }
+}
+
+/// Text between the parentheses of `name(...)`, when the statement ends with the call.
+fn call_args<'a>(sql: &'a str, name: &str) -> Option<&'a str> {
+    let at = sql.find(name)? + name.len();
+    let rest = sql[at..].trim_start().strip_prefix('(')?;
+    rest.trim_end().strip_suffix(')')
+}
+
+/// Byte length of a hex bytea literal: '\x0a1b', or '\\x0a1b' / E'\\x0a1b' without standard_conforming_strings.
+fn hex_bytea_len(lit: &str) -> Option<u64> {
+    let hex = ["'\\x", "'\\\\x", "E'\\\\x"].iter().find_map(|p| lit.strip_prefix(p))?.strip_suffix('\'')?;
+    (hex.len() % 2 == 0 && hex.bytes().all(|b| b.is_ascii_hexdigit())).then_some(hex.len() as u64 / 2)
+}
+
 /// Table of "COPY schema.table (columns) FROM stdin".
 pub fn copy_table(header: &str) -> String {
     let t = tokens(header, 8);
@@ -565,6 +647,53 @@ mod tests {
                 Piece::Copy { .. } => "<copy>",
             })
             .collect()
+    }
+
+    #[test]
+    fn wide_copy() {
+        let cols: Vec<String> = (0..60).map(|i| format!("c{i}")).collect();
+        let text = format!("COPY public.wide ({}) FROM stdin;\n1\t2\n\\.\n\nSELECT 1;\n", cols.join(", "));
+        assert_eq!(stmts(&split(false, &text)), ["<copy>", "SELECT 1"]);
+    }
+
+    #[test]
+    fn owner_changes() {
+        assert!(is_owner_change("ALTER SCHEMA public OWNER TO postgres"));
+        assert!(is_owner_change("ALTER TABLE public.\"Weird Name\" OWNER TO \"My Role\""));
+        assert!(is_owner_change("ALTER FUNCTION public.f(a integer, b text) OWNER TO postgres"));
+        assert!(is_owner_change("ALTER LARGE OBJECT 424242 OWNER TO postgres"));
+        assert!(is_owner_change("SET SESSION AUTHORIZATION 'postgres'"));
+        assert!(!is_owner_change("ALTER TABLE t RENAME owner TO boss"));
+        assert!(!is_owner_change("ALTER TABLE t ADD COLUMN owner text"));
+        assert!(!is_owner_change("SET search_path = public"));
+    }
+
+    #[test]
+    fn large_objects() {
+        let text = r"BEGIN;
+SELECT pg_catalog.lo_open('424242', 131072);
+SELECT pg_catalog.lowrite(0, '\x0a0b0c');
+SELECT pg_catalog.lowrite(0, E'\\xff');
+SELECT pg_catalog.lowrite(0, '\\x0102');
+SELECT pg_catalog.lo_close(0);
+COMMIT;
+SELECT pg_catalog.lowrite(0, '\x00');
+";
+        let mut lo = LargeObjects::default();
+        let out: Vec<Lo> = stmts(&split(false, text)).iter().map(|s| lo.rewrite(s)).collect();
+        assert_eq!(
+            out,
+            [
+                Lo::Keep,
+                Lo::Skip,
+                Lo::Run(r"SELECT pg_catalog.lo_put('424242', 0, '\x0a0b0c')".into()),
+                Lo::Run(r"SELECT pg_catalog.lo_put('424242', 3, E'\\xff')".into()),
+                Lo::Run(r"SELECT pg_catalog.lo_put('424242', 4, '\\x0102')".into()),
+                Lo::Skip,
+                Lo::Keep,
+                Lo::Keep, // no open object
+            ]
+        );
     }
 
     #[test]

@@ -6,6 +6,7 @@ mod external;
 mod error;
 mod autotune;
 mod import;
+mod pgcustom;
 mod projects;
 mod schema;
 mod ssh;
