@@ -12,6 +12,7 @@ Built with Rust and Tauri — small, native and quick to start.
 ![Status: beta](https://img.shields.io/badge/status-beta-orange)
 ![License: MIT](https://img.shields.io/badge/license-MIT-blue)
 ![Platforms](https://img.shields.io/badge/platforms-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey)
+[![Downloads](https://img.shields.io/github/downloads/MadnessCODE/dbclient/total)](https://github.com/MadnessCODE/dbclient/releases)
 
 </div>
 
