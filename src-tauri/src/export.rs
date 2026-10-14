@@ -226,6 +226,7 @@ fn progress(s: &State, job_id: &str, est: u64, started: Instant) -> ImportProgre
         table: s.table.lock().unwrap().clone(),
         elapsed_ms: started.elapsed().as_millis() as u64,
         active_workers: s.active.load(Ordering::Relaxed),
+        auto_limit: None,
         workers: s.workers.lock().unwrap().clone(),
     }
 }

@@ -4,6 +4,7 @@ mod er;
 mod export;
 mod external;
 mod error;
+mod autotune;
 mod import;
 mod projects;
 mod schema;

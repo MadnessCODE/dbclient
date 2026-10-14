@@ -931,6 +931,7 @@ fn progress(shared: &Shared, job_id: &str, unit: &'static str, total: u64, start
         table: shared.table.lock().unwrap().clone(),
         elapsed_ms: started.elapsed().as_millis() as u64,
         active_workers: shared.active.load(Ordering::Relaxed),
+        auto_limit: None,
         workers: shared.workers.lock().unwrap().clone(),
     }
 }

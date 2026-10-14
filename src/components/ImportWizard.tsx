@@ -6,7 +6,7 @@ import { api, errorText, kindLabel, type DumpInfo } from "../lib/api";
 import { isProduction } from "../lib/connStyle";
 import { useStore } from "../store";
 import { formatBytes } from "./LeftPanel";
-import { DatabasePicker, DEFAULT_WORKERS, Feature, input, Section, Steps, targetReady, Toggle, WorkerSlider } from "./importParts";
+import { DatabasePicker, DEFAULT_WORKERS, Feature, MAX_WORKERS, input, Section, Steps, targetReady, Toggle, WorkerSlider } from "./importParts";
 import { startImport } from "../lib/importJobs";
 import { Button, cx, DbIcon, EnvBadge, Modal } from "./ui";
 import { FORMAT_INFO, TABLE_STEPS, TableImport, tableFormatOf, type TableFile } from "./TableImport";
@@ -46,6 +46,7 @@ function Wizard({ initialConn, initialDb, onClose }: { initialConn: string | nul
   const [database, setDatabase] = useState<string>(() => initialDb ?? "");
   const [newDb, setNewDb] = useState(false);
   const [workers, setWorkers] = useState(DEFAULT_WORKERS);
+  const [auto, setAuto] = useState(true);
   const [fast, setFast] = useState(true);
   const [continueOnError, setContinueOnError] = useState(false);
   const [stripDefiner, setStripDefiner] = useState(true);
@@ -107,7 +108,8 @@ function Wizard({ initialConn, initialDb, onClose }: { initialConn: string | nul
     if (!file || !connId || !cfg) return;
     const options = {
       path: file.path,
-      workers,
+      workers: auto ? MAX_WORKERS : workers,
+      auto,
       fast,
       continueOnError,
       database: mysql ? database.trim() || null : null,
@@ -115,7 +117,7 @@ function Wizard({ initialConn, initialDb, onClose }: { initialConn: string | nul
       stripDefiner: mysql && stripDefiner,
     };
     void startImport(
-      { kind: "dump", title: file.name, target: `${cfg.name}${mysql && database ? ` / ${database}` : dbOf(connId) ? ` / ${dbOf(connId)}` : ""}`, connId, workers, fileSize: file.size },
+      { kind: "dump", title: file.name, target: `${cfg.name}${mysql && database ? ` / ${database}` : dbOf(connId) ? ` / ${dbOf(connId)}` : ""}`, connId, workers: options.workers, fileSize: file.size },
       (jobId) => api.importDump(connId, jobId, options),
     );
     onClose();
@@ -288,7 +290,7 @@ function Wizard({ initialConn, initialDb, onClose }: { initialConn: string | nul
 
             <div className="flex min-w-0 flex-col gap-4">
               <Section title="Speed">
-                <WorkerSlider value={workers} onChange={setWorkers} />
+                <WorkerSlider value={workers} onChange={setWorkers} auto={auto} onAuto={setAuto} />
                 <Toggle
                   checked={fast}
                   onChange={setFast}

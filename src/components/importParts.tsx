@@ -81,7 +81,7 @@ export function RunView({
         <Stat label={mode === "export" ? "Tables done" : "Statements"} value={statements.toLocaleString()} />
       </div>
 
-      {p && p.workers.length > 0 && <Lanes workers={p.workers} running={running} total={workers} main={mode !== "export"} />}
+      {p && p.workers.length > 0 && <Lanes workers={p.workers} running={running} total={workers} auto={p.autoLimit ?? null} main={mode !== "export"} />}
 
       {summary?.notes.map((n) => (
         <p key={n} className="flex items-start gap-1.5 text-[12px] text-fg-2">
@@ -141,15 +141,40 @@ export function errorHint(message: string): string | null {
   return null;
 }
 
-/** Parallel connections slider, up to the core count. */
-export function WorkerSlider({ value, onChange }: { value: number; onChange: (v: number) => void }) {
+/** Parallel connections slider, up to the core count. With `onAuto`, also offers Auto (tuned while importing). */
+export function WorkerSlider({ value, onChange, auto = false, onAuto }: { value: number; onChange: (v: number) => void; auto?: boolean; onAuto?: (v: boolean) => void }) {
   const pct = ((value - 1) / (MAX_WORKERS - 1)) * 100;
+  const modes = onAuto && (
+    <div className="flex rounded-md border border-line p-0.5 text-[11.5px]">
+      {[true, false].map((a) => (
+        <button key={String(a)} className={cx("rounded px-2 py-0.5", auto === a ? "bg-accent text-white" : "text-muted hover:text-fg")} onClick={() => onAuto(a)}>
+          {a ? "Auto" : "Manual"}
+        </button>
+      ))}
+    </div>
+  );
+  if (auto && onAuto) {
+    return (
+      <div className="flex flex-col gap-1.5">
+        <div className="flex items-center justify-between">
+          <span className="text-[12.5px] text-fg-2">Parallel connections</span>
+          {modes}
+        </div>
+        <p className="text-[12px] leading-snug text-muted">
+          Starts with {DEFAULT_WORKERS} and adjusts while importing (up to {MAX_WORKERS}), keeping as many as actually make it faster.
+        </p>
+      </div>
+    );
+  }
   return (
     <div className="flex flex-col gap-1.5">
-      <div className="flex items-baseline justify-between">
+      <div className="flex items-center justify-between">
         <span className="text-[12.5px] text-fg-2">Parallel connections</span>
-        <span className="text-[12px] text-muted">
-          <b className="font-mono text-[15px] font-semibold text-fg">{value}</b> / {MAX_WORKERS}
+        <span className="flex items-center gap-2.5 text-[12px] text-muted">
+          <span>
+            <b className="font-mono text-[15px] font-semibold text-fg">{value}</b> / {MAX_WORKERS}
+          </span>
+          {modes}
         </span>
       </div>
       <input
@@ -190,7 +215,8 @@ export const TASK_LABEL: Record<string, string> = { insert: "INSERT", copy: "COP
 
 /** One lane per connection, animated while busy. */
 /** `main`: the first lane is the import's control connection (an export has none). */
-export function Lanes({ workers, running, total, main = true }: { workers: WorkerView[]; running: boolean; total: number; main?: boolean }) {
+/** `auto`: the auto mode's current limit (connections above it wait). */
+export function Lanes({ workers, running, total, auto = null, main = true }: { workers: WorkerView[]; running: boolean; total: number; auto?: number | null; main?: boolean }) {
   const busy = workers.slice(1).filter((w) => w.busy).length;
   const two = workers.length > 9;
   if (!running) {
@@ -211,7 +237,7 @@ export function Lanes({ workers, running, total, main = true }: { workers: Worke
           ))}
         </div>
         <span className="ml-auto text-[12px] tabular-nums text-muted">
-          {total} parallel · {par.reduce((a, w) => a + w.jobs, 0).toLocaleString()} data jobs
+          {auto ? `Auto, up to ${total}` : `${total} parallel`} · {par.reduce((a, w) => a + w.jobs, 0).toLocaleString()} data jobs
         </span>
       </div>
     );
@@ -220,7 +246,7 @@ export function Lanes({ workers, running, total, main = true }: { workers: Worke
     <div className="flex flex-col gap-2">
       <div className="flex items-center justify-between">
         <h3 className="text-[11.5px] font-semibold uppercase tracking-wider text-muted">Connections</h3>
-        <span className="text-[12px] tabular-nums text-muted">{running ? `${busy} of ${total} working` : `${workers.reduce((a, w) => a + w.jobs, 0).toLocaleString()} jobs done`}</span>
+        <span className="text-[12px] tabular-nums text-muted">{running ? (auto ? `Auto · ${auto} of ${total} · ${busy} working` : `${busy} of ${total} working`) : `${workers.reduce((a, w) => a + w.jobs, 0).toLocaleString()} jobs done`}</span>
       </div>
       <div className={cx("grid gap-x-4 gap-y-1.5", two && "grid-cols-2")}>
         {workers.map((w, i) => {

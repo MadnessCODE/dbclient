@@ -261,6 +261,8 @@ export const api = {
 export interface ImportOptions {
   path: string;
   workers: number;
+  /** Tune the active workers during the import, up to `workers` */
+  auto?: boolean;
   fast: boolean;
   continueOnError: boolean;
   database: string | null;
@@ -286,6 +288,8 @@ export interface ImportProgress {
   table: string;
   elapsedMs: number;
   activeWorkers: number;
+  /** Auto mode: workers currently allowed to take jobs */
+  autoLimit?: number | null;
   /** The first is the main connection (DDL, ordered statements); the rest run in parallel */
   workers: WorkerView[];
 }

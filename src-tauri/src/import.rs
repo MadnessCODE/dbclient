@@ -20,6 +20,7 @@ use sqlx::postgres::{PgPoolOptions, Postgres};
 use sqlx::AssertSqlSafe;
 use tokio::sync::{mpsc, watch};
 
+use crate::autotune::{self, Gate, Sample, Tuner};
 use crate::db::DbPool;
 use crate::dump::{classify, copy_table, strip_definer, Kind, Piece, Splitter};
 use crate::error::{msg, AppResult};
@@ -35,6 +36,9 @@ const MAX_ERRORS: usize = 500;
 pub struct ImportOptions {
     pub path: String,
     pub workers: usize,
+    /// Tune the number of active workers during the import, up to `workers`.
+    #[serde(default)]
+    pub auto: bool,
     /// Disable foreign key / unique checks while importing.
     pub fast: bool,
     /// Skip failing statements instead of stopping.
@@ -71,6 +75,8 @@ pub struct ImportProgress {
     pub table: String,
     pub elapsed_ms: u64,
     pub active_workers: usize,
+    /// Auto mode: workers currently allowed to take jobs.
+    pub auto_limit: Option<usize>,
     /// Per connection; the first is the main one (DDL and ordered statements).
     pub workers: Vec<WorkerView>,
 }
@@ -132,6 +138,11 @@ pub(crate) struct Shared {
     pub(crate) errors: Mutex<Vec<ImportError>>,
     pub(crate) table: Mutex<String>,
     pub(crate) active: AtomicUsize,
+    /// INSERT/COPY bytes and jobs finished (auto mode measures these)
+    pub(crate) data_done: AtomicU64,
+    pub(crate) data_jobs: AtomicU64,
+    /// Auto mode's current limit; 0 when fixed.
+    pub(crate) auto_limit: AtomicUsize,
     pub(crate) workers: Mutex<Vec<WorkerView>>,
     /// Session statements (SET, USE) in order; each connection applies the ones it hasn't yet.
     pub(crate) session: RwLock<Vec<String>>,
@@ -295,13 +306,18 @@ impl Shared {
     }
 }
 
-async fn worker(idx: usize, mut conn: Conn, rx: Arc<tokio::sync::Mutex<mpsc::Receiver<Job>>>, shared: Arc<Shared>) {
+async fn worker(idx: usize, mut conn: Conn, rx: Arc<tokio::sync::Mutex<mpsc::Receiver<Job>>>, shared: Arc<Shared>, gate: Option<Arc<Gate>>) {
     let mut applied = 0;
     loop {
+        let permit = match &gate {
+            Some(g) => Some(g.acquire().await),
+            None => None,
+        };
         let job = { rx.lock().await.recv().await };
         let Some(job) = job else { break };
         let key = job.key();
         let bytes = job.bytes();
+        let data = !matches!(job, Job::Index { .. });
         if !shared.stopped() {
             shared.active.fetch_add(1, Ordering::Relaxed);
             let (task, table) = match &job {
@@ -314,9 +330,16 @@ async fn worker(idx: usize, mut conn: Conn, rx: Arc<tokio::sync::Mutex<mpsc::Rec
             run_job(&mut conn, &shared, job).await;
             shared.set_worker(idx, None);
             shared.active.fetch_sub(1, Ordering::Relaxed);
+            if data {
+                shared.data_done.fetch_add(bytes, Ordering::Relaxed);
+                shared.data_jobs.fetch_add(1, Ordering::Relaxed);
+            }
         }
         shared.raw_done.fetch_add(bytes, Ordering::Relaxed);
         shared.done(&key);
+        if let (Some(g), Some(p)) = (&gate, permit) {
+            g.release(p);
+        }
     }
 }
 
@@ -481,6 +504,9 @@ impl Shared {
             errors: Mutex::new(Vec::new()),
             table: Mutex::new(String::new()),
             active: AtomicUsize::new(0),
+            data_done: AtomicU64::new(0),
+            data_jobs: AtomicU64::new(0),
+            auto_limit: AtomicUsize::new(0),
             workers: Mutex::new(vec![WorkerView::default(); workers + 1]),
             session: RwLock::new(Vec::new()),
             inflight: Mutex::new(HashMap::new()),
@@ -535,7 +561,9 @@ pub async fn run(on_progress: OnProgress, imports: &Imports, pool: &DbPool, job_
     let mut control = conns.remove(0);
     let (job_tx, job_rx) = mpsc::channel::<Job>(workers * 2);
     let job_rx = Arc::new(tokio::sync::Mutex::new(job_rx));
-    let handles: Vec<_> = conns.into_iter().enumerate().map(|(i, c)| tokio::spawn(worker(i + 1, c, job_rx.clone(), shared.clone()))).collect();
+    let gate = o.auto.then(|| Arc::new(Gate::new(autotune::START.min(workers))));
+    let handles: Vec<_> = conns.into_iter().enumerate().map(|(i, c)| tokio::spawn(worker(i + 1, c, job_rx.clone(), shared.clone(), gate.clone()))).collect();
+    let tuner = gate.clone().map(|g| tokio::spawn(tune(shared.clone(), g, workers)));
 
     // Small buffer so reading stays close to the database (COPY pieces are up to 8 MB)
     let (piece_tx, mut piece_rx) = mpsc::channel::<Piece>(8);
@@ -555,6 +583,9 @@ pub async fn run(on_progress: OnProgress, imports: &Imports, pool: &DbPool, job_
     }
     let read_result = reader.await.map_err(|e| msg(e.to_string()))?;
     ticker.abort();
+    if let Some(t) = tuner {
+        t.abort();
+    }
     imports.0.lock().unwrap().remove(&job_id);
     on_progress(progress(&shared, &job_id, total_bytes, started));
     read_result.map_err(|e| msg(format!("Could not read the file: {e}")))?;
@@ -580,7 +611,40 @@ fn progress(shared: &Shared, job_id: &str, file_bytes: u64, started: Instant) ->
         table: shared.table.lock().unwrap().clone(),
         elapsed_ms: started.elapsed().as_millis() as u64,
         active_workers: shared.active.load(Ordering::Relaxed),
+        auto_limit: Some(shared.auto_limit.load(Ordering::Relaxed)).filter(|&l| l > 0),
         workers: shared.workers.lock().unwrap().clone(),
+    }
+}
+
+/// Auto mode: measures data throughput in windows and lets the tuner set the gate's limit.
+/// A window lasts at least 3 s and until each allowed worker finished about one job.
+async fn tune(shared: Arc<Shared>, gate: Arc<Gate>, max: usize) {
+    const TICK: Duration = Duration::from_millis(250);
+    let mut tuner = Tuner::new(max);
+    shared.auto_limit.store(tuner.limit(), Ordering::Relaxed);
+    let mut start = Instant::now();
+    let (mut bytes0, mut jobs0) = (shared.data_done.load(Ordering::Relaxed), shared.data_jobs.load(Ordering::Relaxed));
+    let (mut busy_sum, mut ticks) = (0usize, 0u32);
+    loop {
+        tokio::time::sleep(TICK).await;
+        busy_sum += shared.active.load(Ordering::Relaxed);
+        ticks += 1;
+        let elapsed = start.elapsed();
+        let jobs = shared.data_jobs.load(Ordering::Relaxed) - jobs0;
+        let enough = jobs >= tuner.limit() as u64 || (elapsed >= Duration::from_secs(20) && jobs > 0);
+        if elapsed < Duration::from_secs(3) || !enough {
+            if elapsed >= Duration::from_secs(20) {
+                // no data jobs (index builds, DDL): nothing to measure, keep the limit
+                (start, bytes0, jobs0, busy_sum, ticks) = (Instant::now(), shared.data_done.load(Ordering::Relaxed), shared.data_jobs.load(Ordering::Relaxed), 0, 0);
+            }
+            continue;
+        }
+        let bytes = shared.data_done.load(Ordering::Relaxed);
+        let sample = Sample { rate: (bytes - bytes0) as f64 / elapsed.as_secs_f64(), busy: busy_sum as f64 / ticks as f64 };
+        let limit = tuner.step(sample);
+        gate.set(limit);
+        shared.auto_limit.store(limit, Ordering::Relaxed);
+        (start, bytes0, jobs0, busy_sum, ticks) = (Instant::now(), bytes, jobs0 + jobs, 0, 0);
     }
 }
 
