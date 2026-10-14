@@ -11,6 +11,7 @@ import {
   FileUp,
   UserCog,
   FolderInput,
+  FolderX,
   Hash,
   Network,
   Pencil,
@@ -27,6 +28,7 @@ import { api, errorText, kindLabel, type ConnectionConfig, type DbKind } from ".
 import { quoteIdent } from "./sql";
 import { useStore, type MenuEntry } from "../store";
 import { baseId, dbOf, isMultiDb } from "./connIds";
+import { isProduction } from "./connStyle";
 
 export type ObjectKind = "table" | "view" | "matview" | "function" | "procedure" | "trigger";
 
@@ -251,6 +253,7 @@ export function schemaMenu(cfg: ConnectionConfig, schema: string): MenuEntry[] {
     { label: "Copy name", icon: <Copy />, onClick: () => copy(schema) },
     { label: "Refresh", icon: <RefreshCw />, onClick: () => void st().refreshSchema(cfg.id) },
     "sep",
+    ...clearItems(cfg, cfg.id, schema, () => [schema], word),
     {
       label: `Drop ${word}…`,
       icon: <Trash2 />,
@@ -340,6 +343,7 @@ export function databaseMenu(cfg: ConnectionConfig): MenuEntry[] {
     "sep",
     { label: "Copy name", icon: <Copy />, onClick: () => copy(db) },
     "sep",
+    ...clearItems(cfg, cfg.id, db, () => (st().conn[cfg.id]?.schema?.schemas ?? []).filter((s) => !s.system).map((s) => s.name), "database", !connected),
     {
       label: "Drop database…",
       icon: <Trash2 />,
@@ -362,6 +366,100 @@ export function databaseMenu(cfg: ConnectionConfig): MenuEntry[] {
         }),
     },
   ];
+}
+
+/** Always-quoted identifier (generated lists may contain reserved words). */
+function qi(name: string, k: DbKind) {
+  return k === "mysql" ? `\`${name.replace(/`/g, "``")}\`` : `"${name.replace(/"/g, '""')}"`;
+}
+
+/**
+ * "Truncate" (delete all rows, keep the structure) and "Empty" (drop every object, keep the
+ * database) for a MySQL database, a Postgres schema or a Postgres database. Hidden on production.
+ */
+function clearItems(cfg: ConnectionConfig, connId: string, name: string, schemas: () => string[], word: string, disabled = false): MenuEntry[] {
+  if (isProduction(st().connections.find((c) => c.id === baseId(cfg.id)))) return [];
+  const open = async (mode: "truncate" | "empty") => {
+    // the tree may be stale; the SQL lists objects from it
+    await st().refreshSchema(connId);
+    const names = schemas();
+    const infos = (st().conn[connId]?.schema?.schemas ?? []).filter((s) => names.includes(s.name));
+    const tables = infos.flatMap((s) => s.tables.map((t) => `${qi(s.name, cfg.kind)}.${qi(t, cfg.kind)}`));
+    const truncate = mode === "truncate";
+    const sql = truncate ? truncateSql(cfg.kind, tables) : emptySql(cfg.kind, names, infos);
+    const count = (n: number, w: string) => `${n} ${w}${n === 1 ? "" : "s"}`;
+    const views = infos.reduce((a, s) => a + s.views.length + s.matViews.length, 0);
+    const routines = infos.reduce((a, s) => a + s.functions.length + s.procedures.length, 0);
+    st().setUi({
+      actionDialog: {
+        title: `${truncate ? "Truncate" : "Empty"} ${word} ${name}`,
+        connId,
+        danger: true,
+        confirmLabel: truncate ? "Truncate all tables" : `Empty ${word}`,
+        message: truncate
+          ? `All rows in ${count(tables.length, "table")} of "${name}" will be permanently deleted. Tables, views and routines stay. Type the name to confirm.`
+          : `${count(tables.length, "table")}, ${count(views, "view")} and ${count(routines, "routine")} in "${name}" will be permanently dropped${cfg.kind === "postgres" ? ", along with sequences and types" : ""}. The ${word} itself stays. Type the name to confirm.`,
+        input: { label: `Type "${name}" to confirm`, value: "" },
+        requireInput: name,
+        buildSql: () => sql,
+      },
+    });
+  };
+  return [
+    { label: `Truncate ${word}…`, icon: <Eraser />, danger: true, disabled, onClick: () => void open("truncate") },
+    { label: `Empty ${word}…`, icon: <FolderX />, danger: true, disabled, onClick: () => void open("empty") },
+  ];
+}
+
+function truncateSql(k: DbKind, tables: string[]) {
+  if (!tables.length) return "-- no tables";
+  if (k === "postgres") return `TRUNCATE TABLE\n  ${tables.join(",\n  ")}\nRESTART IDENTITY CASCADE;`;
+  return ["SET FOREIGN_KEY_CHECKS = 0;", ...tables.map((t) => `TRUNCATE TABLE ${t};`), "SET FOREIGN_KEY_CHECKS = 1;"].join("\n");
+}
+
+type ClearInfo = { name: string; tables: string[]; views: string[]; procedures: string[]; functions: string[] };
+
+function emptySql(k: DbKind, names: string[], infos: ClearInfo[]) {
+  if (k === "mysql") {
+    const drops = (kw: string, pick: (s: ClearInfo) => string[]) => infos.flatMap((s) => pick(s).map((o) => `DROP ${kw} IF EXISTS ${qi(s.name, k)}.${qi(o, k)};`));
+    return [
+      "SET FOREIGN_KEY_CHECKS = 0;",
+      ...drops("VIEW", (s) => s.views),
+      ...drops("TABLE", (s) => s.tables),
+      ...drops("PROCEDURE", (s) => s.procedures),
+      ...drops("FUNCTION", (s) => s.functions),
+      "SET FOREIGN_KEY_CHECKS = 1;",
+    ].join("\n");
+  }
+  // Postgres: from the catalog, so overloaded routines, sequences and types are covered and
+  // objects that belong to extensions are left alone
+  const list = names.map((n) => `'${n.replace(/'/g, "''")}'`).join(", ");
+  return `DO $clear$
+DECLARE r record;
+BEGIN
+  FOR r IN
+    SELECT format('DROP %s IF EXISTS %I.%I CASCADE',
+             CASE c.relkind WHEN 'v' THEN 'VIEW' WHEN 'm' THEN 'MATERIALIZED VIEW' WHEN 'S' THEN 'SEQUENCE' WHEN 'f' THEN 'FOREIGN TABLE' ELSE 'TABLE' END,
+             n.nspname, c.relname) AS stmt, 1 AS ord
+      FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+     WHERE n.nspname IN (${list}) AND c.relkind IN ('r', 'p', 'v', 'm', 'S', 'f') AND NOT c.relispartition
+       AND NOT EXISTS (SELECT 1 FROM pg_depend d WHERE d.objid = c.oid AND d.deptype = 'e')
+    UNION ALL
+    SELECT format('DROP %s IF EXISTS %s CASCADE', CASE p.prokind WHEN 'p' THEN 'PROCEDURE' WHEN 'a' THEN 'AGGREGATE' ELSE 'FUNCTION' END, p.oid::regprocedure), 2
+      FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
+     WHERE n.nspname IN (${list}) AND p.prokind IN ('f', 'p', 'a')
+       AND NOT EXISTS (SELECT 1 FROM pg_depend d WHERE d.objid = p.oid AND d.deptype = 'e')
+    UNION ALL
+    SELECT format('DROP %s IF EXISTS %I.%I CASCADE', CASE t.typtype WHEN 'd' THEN 'DOMAIN' ELSE 'TYPE' END, n.nspname, t.typname), 3
+      FROM pg_type t JOIN pg_namespace n ON n.oid = t.typnamespace
+     WHERE n.nspname IN (${list}) AND t.typtype IN ('e', 'd', 'r', 'c')
+       AND (t.typtype <> 'c' OR (SELECT relkind FROM pg_class WHERE oid = t.typrelid) = 'c')
+       AND NOT EXISTS (SELECT 1 FROM pg_depend d WHERE d.objid = t.oid AND d.deptype = 'e')
+    ORDER BY ord
+  LOOP
+    EXECUTE r.stmt;
+  END LOOP;
+END $clear$;`;
 }
 
 export function connectionMenu(cfg: ConnectionConfig): MenuEntry[] {

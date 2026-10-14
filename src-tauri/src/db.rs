@@ -341,6 +341,9 @@ pub async fn run_query(
             if matches!(out, Ok((_, true))) {
                 let _ = cancel_backend(pool, cid as i64).await;
                 drop(conn.detach());
+            } else if out.is_err() {
+                // a batch stopped midway may leave session settings changed (FOREIGN_KEY_CHECKS = 0)
+                drop(conn.detach());
             }
             out
         }
