@@ -18,7 +18,6 @@ import {
   CopyX,
   SquareX,
   Unplug,
-  Ellipsis,
   FileCode,
   ListTree,
   Play,
@@ -137,8 +136,18 @@ function tabMenu(tab: EditorTab, tabs: EditorTab[]): MenuEntry[] {
       ? [{ label: `Close all "${connName}" tabs`, icon: <Unplug />, onClick: () => void closeTabs(sameConn) } as MenuEntry]
       : []),
     "sep",
+    ...saveItems(tab),
     { label: "Duplicate tab", icon: <Copy />, onClick: () => st.newTab({ sql: tab.sql, connId: tab.connId, database: tab.database, title: `${tab.title} (copy)`, table: tab.table }) },
     { label: "Copy SQL", icon: <ClipboardCopy />, disabled: !tab.sql.trim(), onClick: () => void navigator.clipboard.writeText(tab.sql) },
+  ];
+}
+
+/** Save / Save as for the tab and editor menus (the tab is read again, the menu may be stale). */
+function saveItems(tab: EditorTab): MenuEntry[] {
+  const current = () => useStore.getState().tabs.find((t) => t.id === tab.id) ?? tab;
+  return [
+    { label: "Save", icon: <Save />, shortcut: `${MOD}+S`, hint: tab.filePath, onClick: () => void saveTab(current()) },
+    { label: "Save as…", icon: <SaveAll />, onClick: () => void saveTab(current(), true) },
   ];
 }
 
@@ -277,7 +286,6 @@ function Toolbar({ tab, editorRef }: { tab: EditorTab; editorRef: React.RefObjec
   const rt = useStore((s) => s.runtime[tab.id]);
   const { runTab, cancelTab, explainTab } = useStore.getState();
   const [runMenu, setRunMenu] = useState(false);
-  const [moreMenu, setMoreMenu] = useState(false);
 
   const run = (mode: "selection-or-all" | "statement") => void runTab(tab.id, sqlToRun(editorRef.current, mode, tab));
 
@@ -320,25 +328,6 @@ function Toolbar({ tab, editorRef }: { tab: EditorTab; editorRef: React.RefObjec
         <WandSparkles size={16} /> Format
       </Button>
       <FavoritesButton tab={tab} editorRef={editorRef} />
-
-      <div className="relative ml-auto flex items-center gap-1">
-        <IconButton title={`Save (${MOD}+S)`} onClick={() => void saveTab(tab)}>
-          <Save size={17} />
-        </IconButton>
-        <IconButton title="Save as..." onClick={() => void saveTab(tab, true)}>
-          <SaveAll size={17} />
-        </IconButton>
-        <IconButton title="More" onClick={() => setMoreMenu((v) => !v)}>
-          <Ellipsis size={17} />
-        </IconButton>
-        {moreMenu && (
-          <Menu onClose={() => setMoreMenu(false)} right>
-            <MenuItem label="Duplicate tab" onClick={() => useStore.getState().newTab({ sql: tab.sql, connId: tab.connId, database: tab.database, title: `${tab.title} (copy)` })} />
-            <MenuItem label="Close other tabs" onClick={() => useStore.getState().tabs.filter((t) => t.id !== tab.id).forEach((t) => useStore.getState().closeTab(t.id))} />
-            <MenuItem label="Close all tabs" onClick={() => [...useStore.getState().tabs].forEach((t) => useStore.getState().closeTab(t.id))} />
-          </Menu>
-        )}
-      </div>
     </div>
   );
 }
@@ -560,6 +549,7 @@ function editorMenu(editor: MonacoEditor, tab: EditorTab): MenuEntry[] {
       disabled: !model?.getValue().trim(),
       onClick: () => openAddFavorite(favoriteSql(editor, tab), tab.connId),
     },
+    ...saveItems(tab),
     "sep",
     {
       label: "Cut",
