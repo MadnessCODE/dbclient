@@ -43,6 +43,8 @@ export interface EditorTab {
   table?: TableRef;
   /** MySQL: default database for unqualified names, picked next to the connection */
   database?: string;
+  /** Table Doctor tab for this table instead of an SQL editor */
+  doctor?: TableRef;
 }
 
 /** What the backend gets as the tab's MySQL default database ("" = none); undefined for Postgres. */
@@ -210,6 +212,8 @@ export interface ActionDialog {
   /** e.g. close our own connections to a database before dropping it */
   beforeRun?: () => Promise<void>;
   afterRun?: () => void;
+  /** Runs the confirmed SQL elsewhere (e.g. a background job) instead of in the dialog */
+  onRun?: (sql: string) => void;
 }
 
 interface PasswordPrompt {
@@ -310,6 +314,7 @@ interface State {
     table?: TableRef;
     resultTab?: ResultTab;
     database?: string;
+    doctor?: TableRef;
   }) => string;
   closeTab: (id: string) => void;
   setActiveTab: (id: string) => void;
@@ -552,6 +557,7 @@ export const useStore = create<State>()(
             filePath: opts.filePath,
             table: opts.table,
             database: opts.database,
+            doctor: opts.doctor,
           };
           set((s) => ({
             view: "workspace",

@@ -1,5 +1,5 @@
-// Background imports: jobs outlive the progress dialog, which can be closed and reopened;
-// completion or failure is reported with a notification.
+// Background imports, exports and maintenance SQL: jobs outlive the progress dialog, which can
+// be closed and reopened; completion or failure is reported with a notification.
 import { create } from "zustand";
 import { listen } from "@tauri-apps/api/event";
 import { isPermissionGranted, requestPermission, sendNotification } from "@tauri-apps/plugin-notification";
@@ -8,7 +8,7 @@ import { useStore } from "../store";
 
 export interface ImportJob {
   id: string;
-  kind: "dump" | "table" | "export";
+  kind: "dump" | "table" | "export" | "sql";
   title: string;
   /** "connection / db.table" */
   target: string;
@@ -23,6 +23,9 @@ export interface ImportJob {
   seen: boolean;
   /** Stop was clicked; running statements are finishing */
   stopping?: boolean;
+  /** kind "sql": statements run one by one, and how many have finished */
+  statements?: string[];
+  done?: number;
 }
 
 export interface Toast {
@@ -58,7 +61,8 @@ export const useImports = create<State>()((set) => ({
   dismiss: (id) => set((s) => ({ jobs: s.jobs.filter((j) => j.id !== id), open: s.open === id ? null : s.open })),
   stop: (id) => {
     set((s) => ({ jobs: s.jobs.map((j) => (j.id === id ? { ...j, stopping: true } : j)) }));
-    void api.cancelImport(id);
+    const job = useImports.getState().jobs.find((j) => j.id === id);
+    void (job?.kind === "sql" ? api.cancelQuery(id) : api.cancelImport(id));
   },
   clearFinished: () => set((s) => ({ jobs: s.jobs.filter((j) => !isDone(j)) })),
   closeToast: (id) => set((s) => ({ toasts: s.toasts.filter((t) => t.id !== id) })),
@@ -70,6 +74,7 @@ export const isRunning = (j: ImportJob) => !isDone(j);
 /** 0..100 */
 export function jobPercent(j: ImportJob) {
   if (j.summary && !j.summary.failed && !j.summary.cancelled) return 100;
+  if (j.kind === "sql") return j.statements?.length ? ((j.done ?? 0) / j.statements.length) * 100 : 0;
   const p = j.progress;
   const total = p?.totalBytes || j.fileSize;
   return total > 0 ? Math.min(100, ((p?.doneBytes ?? 0) / total) * 100) : 0;
@@ -94,6 +99,57 @@ export async function startImport(meta: Omit<ImportJob, "id" | "startedAt" | "se
   }
   if (meta.kind !== "export") void useStore.getState().refreshSchema(meta.connId);
   announce(id);
+}
+
+/**
+ * Runs maintenance SQL (VACUUM, CREATE INDEX, OPTIMIZE…) in the background, one statement at a
+ * time (VACUUM and CONCURRENTLY can't run in a transaction block). No dialog opens; the Tasks
+ * list shows it and a toast reports the end. Resolves with whether it succeeded.
+ */
+export async function startSqlJob(meta: { title: string; target: string; connId: string }, statements: string[], onStart?: (jobId: string) => void) {
+  const id = crypto.randomUUID();
+  const job: ImportJob = { ...meta, id, kind: "sql", workers: 1, fileSize: 0, startedAt: Date.now(), seen: false, statements, done: 0 };
+  useImports.setState((s) => ({ jobs: [...s.jobs, job] }));
+  onStart?.(id);
+  const summary: ImportSummary = { statements: 0, rows: 0, bytes: 0, elapsedMs: 0, cancelled: false, failed: false, errorCount: 0, errors: [], notes: [] };
+  let error: string | undefined;
+  for (const [i, sql] of statements.entries()) {
+    if (useImports.getState().jobs.find((j) => j.id === id)?.stopping) {
+      summary.cancelled = true;
+      break;
+    }
+    try {
+      const out = await api.runQuery(meta.connId, id, sql, 1000);
+      // MySQL OPTIMIZE / ANALYZE TABLE report problems as rows (Msg_type, Msg_text), not errors
+      for (const rs of out.resultSets) {
+        const type = rs.columns.findIndex((c) => c.name.toLowerCase() === "msg_type");
+        const text = rs.columns.findIndex((c) => c.name.toLowerCase() === "msg_text");
+        if (type < 0 || text < 0) continue;
+        for (const row of rs.rows) {
+          const msg = row[text] ?? "";
+          if (row[type]?.toLowerCase() === "error") error ??= msg;
+          else if (msg && msg !== "OK" && msg !== "Table is already up to date") summary.notes.push(msg);
+        }
+      }
+    } catch (e) {
+      error = errorText(e);
+    }
+    if (error) {
+      if (useImports.getState().jobs.find((j) => j.id === id)?.stopping) {
+        summary.cancelled = true;
+        error = undefined;
+      }
+      break;
+    }
+    summary.statements = i + 1;
+    patch(id, { done: i + 1 });
+  }
+  summary.elapsedMs = Date.now() - job.startedAt;
+  summary.failed = !!error;
+  patch(id, { summary, error });
+  void useStore.getState().refreshSchema(meta.connId);
+  announce(id);
+  return !error && !summary.cancelled;
 }
 
 /** Toast for work that isn't an import job; success hides itself, errors stay. */
@@ -124,6 +180,12 @@ function announce(id: string) {
 export function outcome(j: ImportJob): { tone: Toast["tone"]; title: string; body: string } {
   const s = j.summary;
   const secs = s ? `${(s.elapsedMs / 1000).toFixed(1)} s` : "";
+  if (j.kind === "sql") {
+    if (j.error) return { tone: "error", title: `Failed: ${j.title}`, body: j.error };
+    if (!s) return { tone: "warn", title: j.title, body: "" };
+    if (s.cancelled) return { tone: "warn", title: `Stopped: ${j.title}`, body: `${s.statements} of ${j.statements?.length ?? 0} statements finished.` };
+    return { tone: "ok", title: `Done: ${j.title}`, body: `${j.target} · ${secs}${s.notes[0] ? ` · ${s.notes[0]}` : ""}` };
+  }
   if (j.kind === "export") {
     if (j.error || s?.failed) return { tone: "error", title: `Export failed: ${j.title}`, body: j.error ?? s?.errors[0]?.message ?? "" };
     if (!s) return { tone: "warn", title: j.title, body: "" };

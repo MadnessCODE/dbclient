@@ -1,10 +1,10 @@
-// Background imports: progress dialog, Tasks rail button and completion toasts.
+// Background imports, exports and maintenance SQL: progress dialog, Tasks rail button and completion toasts.
 import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { CircleAlert, CircleCheck, FileDown, FileUp, ListChecks, Minimize2, Square, TriangleAlert, X } from "lucide-react";
+import { Circle, CircleAlert, CircleCheck, FileDown, FileUp, ListChecks, Minimize2, Square, TriangleAlert, Wrench, X } from "lucide-react";
 import { isDone, isRunning, jobPercent, outcome, useImports, type ImportJob } from "../lib/importJobs";
 import { useUpdater } from "../lib/updater";
-import { RunView } from "./importParts";
+import { fmtSecs, RunView } from "./importParts";
 import { UpdateToast } from "./UpdateToast";
 import { Button, cx, Modal, Spinner } from "./ui";
 
@@ -17,20 +17,22 @@ export function ImportJobDialog() {
   if (!job) return null;
   const running = isRunning(job);
   const hide = () => show(null);
+  const sql = job.kind === "sql";
+  const noun = job.kind === "export" ? "export" : sql ? "task" : "import";
 
   return (
-    <Modal title={job.kind === "export" ? "Export" : "Import"} onClose={hide} width={job.kind === "table" ? 880 : 760}>
+    <Modal title={job.kind === "export" ? "Export" : sql ? "Maintenance" : "Import"} onClose={hide} width={job.kind === "table" ? 880 : 760}>
       <div className="flex items-center gap-2 border-b border-line px-5 py-2.5 text-[12.5px] text-fg-2">
-        {job.kind === "export" ? <FileDown size={14} className="shrink-0 text-accent" /> : <FileUp size={14} className="shrink-0 text-accent" />}
+        {job.kind === "export" ? <FileDown size={14} className="shrink-0 text-accent" /> : sql ? <Wrench size={14} className="shrink-0 text-accent" /> : <FileUp size={14} className="shrink-0 text-accent" />}
         <span className="truncate font-medium text-fg">{job.title}</span>
         <span className="text-muted">→</span>
         <span className="truncate">{job.target}</span>
       </div>
-      <div className="h-[460px] overflow-y-auto px-5 py-4">
-        <RunView mode={job.kind === "export" ? "export" : "import"} fileSize={job.fileSize} progress={job.progress ?? null} summary={job.summary ?? null} error={job.error ?? null} running={running} workers={job.workers} />
+      <div className={cx("overflow-y-auto px-5 py-4", sql ? "max-h-[460px]" : "h-[460px]")}>
+        {sql ? <SqlJobView job={job} /> : <RunView mode={job.kind === "export" ? "export" : "import"} fileSize={job.fileSize} progress={job.progress ?? null} summary={job.summary ?? null} error={job.error ?? null} running={running} workers={job.workers} />}
       </div>
       <footer className="flex items-center gap-2 border-t border-line px-5 py-3">
-        <span className="text-[12px] text-muted">{running && job.stopping ? "Stopping — waiting for the running statements to finish…" : running ? `You can keep working — the ${job.kind === "export" ? "export" : "import"} runs in the background.` : ""}</span>
+        <span className="text-[12px] text-muted">{running && job.stopping ? "Stopping — waiting for the running statements to finish…" : running ? `You can keep working — the ${noun} runs in the background.` : ""}</span>
         <div className="ml-auto flex gap-2">
           {running ? (
             <>
@@ -38,7 +40,7 @@ export function ImportJobDialog() {
                 <Minimize2 size={14} /> Run in background
               </Button>
               <Button variant="danger" disabled={job.stopping} onClick={() => stop(job.id)}>
-                {job.stopping ? <Spinner size={12} /> : <Square size={12} fill="currentColor" />} {job.stopping ? "Stopping…" : `Stop ${job.kind === "export" ? "export" : "import"}`}
+                {job.stopping ? <Spinner size={12} /> : <Square size={12} fill="currentColor" />} {job.stopping ? "Stopping…" : `Stop ${noun}`}
               </Button>
             </>
           ) : (
@@ -186,7 +188,17 @@ function TaskRow({ job: j, onOpen, onDismiss }: { job: ImportJob; onOpen: () => 
   const tone = done ? outcome(j).tone : null;
   const pct = jobPercent(j);
   const rows = j.summary?.rows ?? j.progress?.rows ?? 0;
-  const status = !done
+  const status = j.kind === "sql"
+    ? !done
+      ? j.stopping
+        ? "Stopping…"
+        : `Statement ${Math.min((j.done ?? 0) + 1, j.statements?.length ?? 1)} of ${j.statements?.length ?? 1}`
+      : j.error
+        ? "Failed"
+        : j.summary?.cancelled
+          ? "Stopped"
+          : `Done · ${((j.summary?.elapsedMs ?? 0) / 1000).toFixed(1)} s`
+    : !done
     ? j.stopping
       ? "Stopping…"
       : `${rows.toLocaleString()} rows · ${Math.floor(pct)}%`
@@ -222,7 +234,7 @@ function TaskRow({ job: j, onOpen, onDismiss }: { job: ImportJob; onOpen: () => 
       </button>
       {!done ? (
         <button
-          title={j.stopping ? "Stopping…" : j.kind === "export" ? "Stop export" : "Stop import"}
+          title={j.stopping ? "Stopping…" : j.kind === "export" ? "Stop export" : j.kind === "sql" ? "Stop task" : "Stop import"}
           disabled={j.stopping}
           onClick={() => useImports.getState().stop(j.id)}
           className="rounded p-1 text-muted hover:bg-err/15 hover:text-err disabled:hover:bg-transparent"
@@ -234,6 +246,50 @@ function TaskRow({ job: j, onOpen, onDismiss }: { job: ImportJob; onOpen: () => 
           <X size={14} />
         </button>
       )}
+    </div>
+  );
+}
+
+/** Statements of a maintenance job with their state, elapsed time and server messages. */
+function SqlJobView({ job }: { job: ImportJob }) {
+  const [now, setNow] = useState(Date.now());
+  const running = isRunning(job);
+  useEffect(() => {
+    if (!running) return;
+    const t = setInterval(() => setNow(Date.now()), 500);
+    return () => clearInterval(t);
+  }, [running]);
+  const done = job.done ?? 0;
+  const elapsed = (job.summary?.elapsedMs ?? now - job.startedAt) / 1000;
+  return (
+    <div className="space-y-3">
+      <div className="text-[12.5px] text-fg-2">
+        {running ? "Running" : job.error ? "Failed" : job.summary?.cancelled ? "Stopped" : "Finished"} · {fmtSecs(elapsed)}
+      </div>
+      <ul className="space-y-1.5">
+        {(job.statements ?? []).map((s, i) => (
+          <li key={i} className="flex items-start gap-2.5 rounded-md border border-line bg-bg/40 px-3 py-2">
+            <span className="mt-0.5 shrink-0">
+              {i < done ? (
+                <CircleCheck size={15} className="text-ok" />
+              ) : i === done && running ? (
+                <Spinner size={14} />
+              ) : i === done && job.error ? (
+                <CircleAlert size={15} className="text-err" />
+              ) : (
+                <Circle size={15} className="text-muted" />
+              )}
+            </span>
+            <code className="selectable min-w-0 flex-1 font-mono text-[12px] break-all whitespace-pre-wrap text-fg">{s}</code>
+          </li>
+        ))}
+      </ul>
+      {job.error && <p className="selectable rounded-md bg-err/10 px-3 py-2 text-[13px] text-err">{job.error}</p>}
+      {job.summary?.notes.map((n, i) => (
+        <p key={i} className="selectable text-[12px] text-fg-2">
+          {n}
+        </p>
+      ))}
     </div>
   );
 }

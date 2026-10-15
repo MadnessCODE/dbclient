@@ -20,6 +20,7 @@ import {
   Plug,
   Plus,
   RefreshCw,
+  Stethoscope,
   TableProperties,
   Trash2,
   Unplug,
@@ -30,6 +31,7 @@ import { quoteIdent } from "./sql";
 import { useStore, type MenuEntry } from "../store";
 import { baseId, dbOf, isMultiDb, subId } from "./connIds";
 import { isProduction } from "./connStyle";
+import { openDoctor } from "./doctor";
 
 export type ObjectKind = "table" | "view" | "matview" | "function" | "procedure" | "trigger";
 
@@ -113,6 +115,7 @@ export function tableMenu(cfg: ConnectionConfig, schema: string, name: string, k
     { label: "Open (first 100 rows)", icon: <Play />, onClick: () => openSql(connId, `SELECT *\nFROM ${ed}\nLIMIT 100;`, `${name}.sql`, { run: true, schema, table: name, database }) },
     { label: "Structure", icon: <TableProperties />, onClick: () => openSql(connId, `SELECT *\nFROM ${ed}\nLIMIT 100;`, `${name}.sql`, { run: true, schema, table: name, structure: true, database }) },
     { label: "Count rows", icon: <Hash />, onClick: () => openSql(connId, `SELECT COUNT(*) AS total\nFROM ${ed};`, `${name}_count.sql`, { run: true, schema, table: name, database }) },
+    ...(isTable ? [{ label: "Analyze table", icon: <Stethoscope />, hint: "Table Doctor: health, indexes and fixes", onClick: () => openDoctor(connId, schema, name, database) } as MenuEntry] : []),
     "sep",
     {
       label: "Script as",
