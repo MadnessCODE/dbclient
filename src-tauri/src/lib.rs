@@ -308,9 +308,10 @@ async fn run_query(
     query_id: String,
     sql: String,
     max_rows: usize,
+    database: Option<String>,
 ) -> AppResult<QueryOutput> {
     let pool = pools.get(&conn_id)?;
-    db::run_query(&pool, &running, &query_id, sql, max_rows.max(1)).await
+    db::run_query(&pool, &running, &query_id, sql, max_rows.max(1), database.as_deref()).await
 }
 
 #[tauri::command]
@@ -324,8 +325,8 @@ async fn cancel_query(running: State<'_, RunningQueries>, query_id: String) -> A
 }
 
 #[tauri::command]
-async fn explain_query(pools: State<'_, Pools>, conn_id: String, sql: String) -> AppResult<String> {
-    db::explain(&pools.get(&conn_id)?, &sql).await
+async fn explain_query(pools: State<'_, Pools>, conn_id: String, sql: String, database: Option<String>) -> AppResult<String> {
+    db::explain(&pools.get(&conn_id)?, &sql, database.as_deref()).await
 }
 
 #[tauri::command]

@@ -41,6 +41,25 @@ export interface EditorTab {
   dirty?: boolean;
   /** Table the tab belongs to (Structure tab), if known */
   table?: TableRef;
+  /** MySQL: default database for unqualified names, picked next to the connection */
+  database?: string;
+}
+
+/** What the backend gets as the tab's MySQL default database ("" = none); undefined for Postgres. */
+export function tabDatabase(tab: Pick<EditorTab, "connId" | "database">): string | undefined {
+  const cfg = useStore.getState().connections.find((c) => c.id === baseId(tab.connId));
+  if (cfg?.kind !== "mysql") return undefined;
+  return tab.database ?? cfg.database.trim();
+}
+
+/** Database named by the last `USE db;` in the SQL, so the picker follows it. */
+function usedDatabase(sql: string): string | undefined {
+  let db: string | undefined;
+  for (const st of splitStatements(sql, "mysql")) {
+    const m = /^use\s+(?:`((?:[^`]|``)+)`|([\w$]+))\s*;?\s*$/i.exec(st.text.trim());
+    if (m) db = m[1]?.replace(/``/g, "`") ?? m[2];
+  }
+  return db;
 }
 
 export interface TableRef {
@@ -208,6 +227,8 @@ export interface ExportJob {
   /** Query and connection, so the wizard can re-run it without a limit */
   connId?: string | null;
   sql?: string;
+  /** MySQL default database the query ran in */
+  database?: string;
 }
 
 export interface Secrets {
@@ -288,6 +309,7 @@ interface State {
     filePath?: string;
     table?: TableRef;
     resultTab?: ResultTab;
+    database?: string;
   }) => string;
   closeTab: (id: string) => void;
   setActiveTab: (id: string) => void;
@@ -529,6 +551,7 @@ export const useStore = create<State>()(
             connId: opts.connId !== undefined ? opts.connId : get().selectedConnId,
             filePath: opts.filePath,
             table: opts.table,
+            database: opts.database,
           };
           set((s) => ({
             view: "workspace",
@@ -608,7 +631,9 @@ export const useStore = create<State>()(
           get().patchRuntime(tabId, { running: true, queryId, startedAt: Date.now(), error: undefined, lastSql: sql, serverSort });
           const historyItem: HistoryItem = { id: queryId, tabId, sql, connId, title: tab.title, at: Date.now(), ok: false };
           try {
-            const output = await api.runQuery(connId, queryId, sql, get().settings.maxRows);
+            const output = await api.runQuery(connId, queryId, sql, get().settings.maxRows, tabDatabase(tab));
+            const used = cfg?.kind === "mysql" ? usedDatabase(sql) : undefined;
+            if (used !== undefined) get().updateTab(tabId, { database: used });
             const sets = output.resultSets;
             let lastRows = -1;
             sets.forEach((rs, i) => {
@@ -672,7 +697,7 @@ export const useStore = create<State>()(
           if (get().conn[tab.connId]?.status !== "connected" && !(await get().connectTo(tab.connId))) return;
           get().patchRuntime(tabId, { explaining: true, resultTab: "explain" });
           try {
-            const explain = await api.explainQuery(tab.connId, sql);
+            const explain = await api.explainQuery(tab.connId, sql, tabDatabase(tab));
             get().patchRuntime(tabId, { explain, explaining: false });
           } catch (e) {
             get().patchRuntime(tabId, { explain: undefined, explaining: false, resultTab: "messages" });

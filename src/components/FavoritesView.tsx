@@ -48,7 +48,7 @@ function insertFavorite(tab: EditorTab, f: FavoriteQuery) {
 }
 
 function openInNewTab(tab: EditorTab, f: FavoriteQuery) {
-  st().newTab({ sql: f.sql, title: f.name, connId: tab.connId });
+  st().newTab({ sql: f.sql, title: f.name, connId: tab.connId, database: tab.database });
 }
 
 async function deleteFavorite(f: FavoriteQuery) {

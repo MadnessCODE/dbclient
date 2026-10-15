@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { History, CircleAlert, CircleCheck, TableProperties, Download, Info, ListTree, Maximize2, Minimize2, MessageSquare, Sheet, Square } from "lucide-react";
 import type { ResultSet } from "../lib/api";
-import { useActiveTab, useStore, type ResultTab, type TabRuntime } from "../store";
+import { tabDatabase, useActiveTab, useStore, type ResultTab, type TabRuntime } from "../store";
 import { Button, cx, IconButton, Spinner, MOD } from "./ui";
 import { StructurePanel } from "./StructurePanel";
 import { DataGrid } from "./DataGrid";
@@ -21,7 +21,7 @@ export function ResultsPanel({ height }: { height?: number }) {
   const rs = sets[rt?.activeSet ?? 0];
   const kind = connections.find((c) => c.id === baseId(tab.connId))?.kind ?? "postgres";
 
-  const openExport = () => rs && setUi({ exportJob: { rs, name: tab.title, kind, tabId: tab.id, connId: tab.connId, sql: rt?.lastSql } });
+  const openExport = () => rs && setUi({ exportJob: { rs, name: tab.title, kind, tabId: tab.id, connId: tab.connId, sql: rt?.lastSql, database: tabDatabase(tab) } });
 
   return (
     <div style={maximized ? undefined : { height }} className={cx("relative mx-3 mb-3 flex shrink-0 flex-col overflow-hidden rounded-lg border border-line-strong bg-panel-2", maximized && "min-h-0 flex-1 mt-3")}>

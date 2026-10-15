@@ -31,6 +31,7 @@ import { cellKind, isTruthy, relativeTime, unixTsColumn, unixTsInfo, type CellKi
 import { isProduction } from "../lib/connStyle";
 import { buildDml, editTargetOf, emptyPending, pendingCount, type EditTarget, type PendingEdits, type RowKey } from "../lib/edit";
 import { quoteIdent } from "../lib/sql";
+import { editorDb, editorName } from "../lib/treeActions";
 import { exportableQuery, gridViews, sortedQuery, type SortKey } from "../lib/export";
 import { useStore, type MenuEntry } from "../store";
 import { CellEditor } from "./CellEditor";
@@ -84,8 +85,8 @@ function sortIndexes(rows: Cell[][], keys: SortKey[], numeric: boolean[]): numbe
 /** Opens the referenced row in a new tab. */
 function followFk(connId: string, kind: DbKind, fk: ColumnRef, value: string, numericValue: boolean) {
   const literal = numericValue && /^-?\d+(\.\d+)?$/.test(value) ? value : `'${(kind === "mysql" ? value.replace(/\\/g, "\\\\") : value).replace(/'/g, "''")}'`;
-  const sql = `SELECT *\nFROM ${quoteIdent(fk.schema, kind)}.${quoteIdent(fk.table, kind)}\nWHERE ${quoteIdent(fk.column, kind)} = ${literal};`;
-  useStore.getState().newTab({ sql, connId, title: `${fk.table}.sql`, run: true, table: { schema: fk.schema, table: fk.table } });
+  const sql = `SELECT *\nFROM ${editorName(kind, fk.schema, fk.table)}\nWHERE ${quoteIdent(fk.column, kind)} = ${literal};`;
+  useStore.getState().newTab({ sql, connId, database: editorDb(kind, fk.schema), title: `${fk.table}.sql`, run: true, table: { schema: fk.schema, table: fk.table } });
 }
 
 const cellId = (r: number, c: number) => `${r}:${c}`;

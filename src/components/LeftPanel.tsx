@@ -33,9 +33,8 @@ import {
 import { errorText, type ConnectionConfig, type DatabaseInfo, type Project, type SchemaInfo, type TableStat } from "../lib/api";
 import { accountKey, listAccounts, type Account } from "../lib/users";
 import { ProjectIcon } from "./ProjectIcon";
-import { quoteIdent } from "../lib/sql";
 import { useStore, type MenuEntry, type TreeFocus } from "../store";
-import { categoryMenu, connectionMenu, databaseMenu, routineMenu, schemaMenu, tableMenu, type ObjectKind } from "../lib/treeActions";
+import { categoryMenu, connectionMenu, databaseMenu, editorDb, editorName, routineMenu, schemaMenu, tableMenu, type ObjectKind } from "../lib/treeActions";
 import { baseId, dbOf, isMultiDb, subId } from "../lib/connIds";
 import { Button, cx, DbIcon, EnvBadge, IconButton, SchemaIcon, SearchInput, Spinner } from "./ui";
 import { connColor, tint } from "../lib/connStyle";
@@ -692,8 +691,9 @@ function CategoryNode({
 
   const openTable = (name: string, structure = false) =>
     st().newTab({
-      sql: `SELECT *\nFROM ${quoteIdent(schema, cfg.kind)}.${quoteIdent(name, cfg.kind)}\nLIMIT 100;`,
+      sql: `SELECT *\nFROM ${editorName(cfg.kind, schema, name)}\nLIMIT 100;`,
       connId: cfg.id,
+      database: editorDb(cfg.kind, schema),
       title: `${name}.sql`,
       run: true,
       table: { schema, table: name },

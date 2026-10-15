@@ -309,12 +309,38 @@ async fn cancel_backend(pool: &DbPool, backend_id: i64) -> AppResult<()> {
     Ok(())
 }
 
+/// A MySQL connection whose default database is `database`. A pooled connection keeps the
+/// database of its last `USE`, so editor runs always send theirs: `Some("")` asks for a
+/// connection without one (connections that have one are closed instead of reused).
+async fn mysql_conn(p: &sqlx::MySqlPool, database: Option<&str>) -> AppResult<sqlx::pool::PoolConnection<sqlx::MySql>> {
+    let mut conn = p.acquire().await?;
+    match database {
+        Some(db) if !db.is_empty() => {
+            sqlx::raw_sql(AssertSqlSafe(format!("USE `{}`", db.replace('`', "``")))).execute(&mut *conn).await?;
+        }
+        Some(_) => {
+            for _ in 0..8 {
+                let current: Option<String> = sqlx::query_scalar("select database()").fetch_one(&mut *conn).await?;
+                if current.is_none() {
+                    break;
+                }
+                drop(conn.detach());
+                conn = p.acquire().await?;
+            }
+        }
+        None => {}
+    }
+    Ok(conn)
+}
+
+/// `database`: MySQL default database for unqualified names (see `mysql_conn`); ignored for Postgres.
 pub async fn run_query(
     pool: &DbPool,
     running: &RunningQueries,
     query_id: &str,
     sql: String,
     max_rows: usize,
+    database: Option<&str>,
 ) -> AppResult<QueryOutput> {
     let started = Instant::now();
     let result = match pool {
@@ -333,7 +359,7 @@ pub async fn run_query(
             out
         }
         DbPool::My(p) => {
-            let mut conn = p.acquire().await?;
+            let mut conn = mysql_conn(p, database).await?;
             let cid: u64 = sqlx::query_scalar("select connection_id()").fetch_one(&mut *conn).await?;
             running.insert(query_id, pool.clone(), cid as i64);
             let stream = sqlx::raw_sql(AssertSqlSafe(sql)).fetch_many(&mut *conn);
@@ -525,13 +551,16 @@ impl QueryResultExt for sqlx::mysql::MySqlQueryResult {
 }
 
 
-pub async fn explain(pool: &DbPool, sql: &str) -> AppResult<String> {
+pub async fn explain(pool: &DbPool, sql: &str, database: Option<&str>) -> AppResult<String> {
     let sql = sql.trim().trim_end_matches(';');
-    let (query, kind) = match pool {
-        DbPool::Pg(_) => (format!("EXPLAIN (VERBOSE false, COSTS true) {sql}"), DbKind::Postgres),
-        DbPool::My(_) => (format!("EXPLAIN FORMAT=TREE {sql}"), DbKind::Mysql),
+    let (rows, kind) = match pool {
+        DbPool::Pg(_) => (pool.text_rows(&format!("EXPLAIN (VERBOSE false, COSTS true) {sql}")).await?, DbKind::Postgres),
+        DbPool::My(p) => {
+            let mut conn = mysql_conn(p, database).await?;
+            let rows = sqlx::raw_sql(AssertSqlSafe(format!("EXPLAIN FORMAT=TREE {sql}"))).fetch_all(&mut *conn).await?;
+            (rows.iter().map(|r| (0..r.len()).map(|i| my_cell(r, i)).collect()).collect::<Vec<Vec<Cell>>>(), DbKind::Mysql)
+        }
     };
-    let rows = pool.text_rows(&query).await?;
     let lines: Vec<String> = rows.into_iter().filter_map(|r| r.into_iter().next().flatten()).collect();
     Ok(match kind {
         DbKind::Postgres => lines.join("\n"),

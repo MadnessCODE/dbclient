@@ -30,6 +30,7 @@ import {
   TriangleAlert,
   WandSparkles,
   X,
+  Database,
 } from "lucide-react";
 import type * as MonacoApi from "monaco-editor";
 import { monaco, setCompletionContext } from "../lib/monaco";
@@ -136,7 +137,7 @@ function tabMenu(tab: EditorTab, tabs: EditorTab[]): MenuEntry[] {
       ? [{ label: `Close all "${connName}" tabs`, icon: <Unplug />, onClick: () => void closeTabs(sameConn) } as MenuEntry]
       : []),
     "sep",
-    { label: "Duplicate tab", icon: <Copy />, onClick: () => st.newTab({ sql: tab.sql, connId: tab.connId, title: `${tab.title} (copy)`, table: tab.table }) },
+    { label: "Duplicate tab", icon: <Copy />, onClick: () => st.newTab({ sql: tab.sql, connId: tab.connId, database: tab.database, title: `${tab.title} (copy)`, table: tab.table }) },
     { label: "Copy SQL", icon: <ClipboardCopy />, disabled: !tab.sql.trim(), onClick: () => void navigator.clipboard.writeText(tab.sql) },
   ];
 }
@@ -332,7 +333,7 @@ function Toolbar({ tab, editorRef }: { tab: EditorTab; editorRef: React.RefObjec
         </IconButton>
         {moreMenu && (
           <Menu onClose={() => setMoreMenu(false)} right>
-            <MenuItem label="Duplicate tab" onClick={() => useStore.getState().newTab({ sql: tab.sql, connId: tab.connId, title: `${tab.title} (copy)` })} />
+            <MenuItem label="Duplicate tab" onClick={() => useStore.getState().newTab({ sql: tab.sql, connId: tab.connId, database: tab.database, title: `${tab.title} (copy)` })} />
             <MenuItem label="Close other tabs" onClick={() => useStore.getState().tabs.filter((t) => t.id !== tab.id).forEach((t) => useStore.getState().closeTab(t.id))} />
             <MenuItem label="Close all tabs" onClick={() => [...useStore.getState().tabs].forEach((t) => useStore.getState().closeTab(t.id))} />
           </Menu>
@@ -401,12 +402,12 @@ function ConnectionPicker({ tab }: { tab: EditorTab }) {
   const connections = useStore((s) => s.connections);
   const conn = useStore((s) => s.conn);
   const cfg = connections.find((c) => c.id === baseId(tab.connId));
-  const db = dbOf(tab.connId);
+  const db = dbOf(tab.connId) ?? (cfg?.kind === "mysql" ? tab.database ?? (cfg.database.trim() || undefined) : undefined);
   const [open, setOpen] = useState(false);
 
-  const pick = (id: string) => {
+  const pick = (id: string, database?: string) => {
     const st = useStore.getState();
-    st.updateTab(tab.id, { connId: id });
+    st.updateTab(tab.id, { connId: id, database });
     st.selectConnection(baseId(id)!);
     if (conn[id]?.status !== "connected") void st.connectTo(id);
     setOpen(false);
@@ -440,13 +441,29 @@ function ConnectionPicker({ tab }: { tab: EditorTab }) {
             <div key={c.id}>
               <button
                 onClick={() => pick(c.id)}
-                className={cx("flex w-full items-center gap-2 rounded px-2.5 py-1.5 text-left text-[13px] hover:bg-hover", c.id === tab.connId && "bg-accent-soft")}
+                className={cx("flex w-full items-center gap-2 rounded px-2.5 py-1.5 text-left text-[13px] hover:bg-hover", c.id === tab.connId && !(c.kind === "mysql" && db) && "bg-accent-soft")}
               >
                 <DbIcon kind={c.kind} size={15} />
                 <StatusDot status={conn[c.id]?.status} className="h-2 w-2" />
                 <span className="truncate">{c.name}</span>
                 <span className="ml-auto text-[11px] text-muted">{kindLabel(c.kind)}</span>
               </button>
+              {c.kind === "mysql" &&
+                conn[c.id]?.schema?.schemas
+                  .filter((s) => !s.system)
+                  .map((s) => {
+                    const current = c.id === tab.connId && s.name === db;
+                    return (
+                      <button
+                        key={s.name}
+                        onClick={() => pick(c.id, s.name)}
+                        className={cx("flex w-full items-center gap-2 rounded py-1 pr-2.5 pl-8 text-left text-[12.5px] hover:bg-hover", current && "bg-accent-soft")}
+                      >
+                        <Database size={13} className="shrink-0 text-muted" />
+                        <span className="truncate">{s.name}</span>
+                      </button>
+                    );
+                  })}
               {isMultiDb(c) &&
                 conn[c.id]?.databases?.map((d) => {
                   const id = subId(c.id, d.name);

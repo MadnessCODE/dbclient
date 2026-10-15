@@ -64,7 +64,7 @@ function Wizard({ job, onClose }: { job: ExportJob; onClose: () => void }) {
     const queryId = crypto.randomUUID();
     setFetching({ queryId, startedAt: Date.now() });
     try {
-      const out = await api.runQuery(job.connId!, queryId, allSql!, Number.MAX_SAFE_INTEGER);
+      const out = await api.runQuery(job.connId!, queryId, allSql!, Number.MAX_SAFE_INTEGER, job.database);
       const res = out.resultSets.find((x) => x.returnsRows);
       if (!res) throw new Error("The query returned no rows.");
       if (res.columns.length !== rs.columns.length) throw new Error("The query now returns different columns. Run it again and retry the export.");

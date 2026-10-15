@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { Eye, History, Moon, Play, Settings, Sheet, Star, Sun } from "lucide-react";
 import { kindLabel } from "../lib/api";
 import { quoteIdent } from "../lib/sql";
+import { editorDb, editorName } from "../lib/treeActions";
 import { useStore } from "../store";
 import { cx, DbIcon, Modal, MOD } from "./ui";
 import { baseId, dbOf, isMultiDb } from "../lib/connIds";
@@ -49,7 +50,15 @@ function Palette() {
               icon: isView ? <Eye size={15} className="text-muted" /> : <Sheet size={15} className="text-muted" />,
               label: `${s.name}.${t}`,
               detail: name,
-              run: () => st.newTab({ sql: `SELECT *\nFROM ${quoteIdent(s.name, c.kind)}.${quoteIdent(t, c.kind)}\nLIMIT 100;`, connId: id, title: `${t}.sql`, run: true, table: { schema: s.name, table: t } }),
+              run: () =>
+                st.newTab({
+                  sql: `SELECT *\nFROM ${editorName(c.kind, s.name, t)}\nLIMIT 100;`,
+                  connId: id,
+                  database: editorDb(c.kind, s.name),
+                  title: `${t}.sql`,
+                  run: true,
+                  table: { schema: s.name, table: t },
+                }),
             });
           }
           for (const col of schema!.columns.filter((x) => x.schema === s.name)) {
@@ -61,8 +70,9 @@ function Palette() {
               detail: `${col.dataType} · ${name}`,
               run: () =>
                 st.newTab({
-                  sql: `SELECT ${quoteIdent(col.name, c.kind)}, count(*)\nFROM ${quoteIdent(s.name, c.kind)}.${quoteIdent(col.table, c.kind)}\nGROUP BY 1\nORDER BY 2 DESC\nLIMIT 100;`,
+                  sql: `SELECT ${quoteIdent(col.name, c.kind)}, count(*)\nFROM ${editorName(c.kind, s.name, col.table)}\nGROUP BY 1\nORDER BY 2 DESC\nLIMIT 100;`,
                   connId: id,
+                  database: editorDb(c.kind, s.name),
                   title: `${col.table}.sql`,
                   run: true,
                 }),

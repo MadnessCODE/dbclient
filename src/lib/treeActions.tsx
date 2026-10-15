@@ -40,11 +40,23 @@ function fq(kind: DbKind, schema: string, name: string) {
   return `${quoteIdent(schema, kind)}.${quoteIdent(name, kind)}`;
 }
 
-function openSql(connId: string, sql: string, title: string, opts: { run?: boolean; schema?: string; table?: string; structure?: boolean } = {}) {
+/**
+ * Object name in SQL opened in an editor tab. A MySQL tab runs in the database picked next
+ * to its connection (`editorDb`), so the name stays unqualified there.
+ */
+export function editorName(kind: DbKind, schema: string, name: string) {
+  return kind === "mysql" ? quoteIdent(name, kind) : fq(kind, schema, name);
+}
+
+/** The tab's MySQL default database for SQL that uses `editorName`. */
+export const editorDb = (kind: DbKind, schema: string) => (kind === "mysql" ? schema : undefined);
+
+function openSql(connId: string, sql: string, title: string, opts: { run?: boolean; schema?: string; table?: string; structure?: boolean; database?: string } = {}) {
   st().newTab({
     sql,
     connId,
     title,
+    database: opts.database,
     run: opts.run,
     table: opts.schema && opts.table ? { schema: opts.schema, table: opts.table } : undefined,
     resultTab: opts.structure ? "structure" : undefined,
@@ -62,6 +74,8 @@ function forgetTable(connId: string, schema: string, table: string) {
 export function tableMenu(cfg: ConnectionConfig, schema: string, name: string, kind: ObjectKind): MenuEntry[] {
   const k = cfg.kind;
   const full = fq(k, schema, name);
+  const ed = editorName(k, schema, name);
+  const database = editorDb(k, schema);
   const connId = cfg.id;
   const isTable = kind === "table";
   const dropKw = kind === "view" ? "VIEW" : kind === "matview" ? "MATERIALIZED VIEW" : "TABLE";
@@ -73,13 +87,13 @@ export function tableMenu(cfg: ConnectionConfig, schema: string, name: string, k
       const pk = s.columns.filter((c) => c.primaryKey).map((c) => quoteIdent(c.name, k));
       const where = (pk.length ? pk : cols.slice(0, 1)).map((c) => `${c} = ?`).join("\n  AND ");
       const sql = {
-        select: `SELECT\n    ${cols.join(",\n    ")}\nFROM ${full}\nLIMIT 100;`,
-        insert: `INSERT INTO ${full} (\n    ${cols.join(",\n    ")}\n) VALUES (\n    ${cols.map(() => "?").join(",\n    ")}\n);`,
-        update: `UPDATE ${full}\nSET\n    ${cols.filter((c) => !pk.includes(c)).map((c) => `${c} = ?`).join(",\n    ")}\nWHERE ${where};`,
-        delete: `DELETE FROM ${full}\nWHERE ${where};`,
+        select: `SELECT\n    ${cols.join(",\n    ")}\nFROM ${ed}\nLIMIT 100;`,
+        insert: `INSERT INTO ${ed} (\n    ${cols.join(",\n    ")}\n) VALUES (\n    ${cols.map(() => "?").join(",\n    ")}\n);`,
+        update: `UPDATE ${ed}\nSET\n    ${cols.filter((c) => !pk.includes(c)).map((c) => `${c} = ?`).join(",\n    ")}\nWHERE ${where};`,
+        delete: `DELETE FROM ${ed}\nWHERE ${where};`,
         create: s.ddl,
       }[what];
-      openSql(connId, sql, `${name}_${what}.sql`, { schema, table: name });
+      openSql(connId, sql, `${name}_${what}.sql`, { schema, table: name, database });
     } catch (e) {
       alert(errorText(e));
     }
@@ -96,9 +110,9 @@ export function tableMenu(cfg: ConnectionConfig, schema: string, name: string, k
   };
 
   const items: MenuEntry[] = [
-    { label: "Open (first 100 rows)", icon: <Play />, onClick: () => openSql(connId, `SELECT *\nFROM ${full}\nLIMIT 100;`, `${name}.sql`, { run: true, schema, table: name }) },
-    { label: "Structure", icon: <TableProperties />, onClick: () => openSql(connId, `SELECT *\nFROM ${full}\nLIMIT 100;`, `${name}.sql`, { run: true, schema, table: name, structure: true }) },
-    { label: "Count rows", icon: <Hash />, onClick: () => openSql(connId, `SELECT COUNT(*) AS total\nFROM ${full};`, `${name}_count.sql`, { run: true, schema, table: name }) },
+    { label: "Open (first 100 rows)", icon: <Play />, onClick: () => openSql(connId, `SELECT *\nFROM ${ed}\nLIMIT 100;`, `${name}.sql`, { run: true, schema, table: name, database }) },
+    { label: "Structure", icon: <TableProperties />, onClick: () => openSql(connId, `SELECT *\nFROM ${ed}\nLIMIT 100;`, `${name}.sql`, { run: true, schema, table: name, structure: true, database }) },
+    { label: "Count rows", icon: <Hash />, onClick: () => openSql(connId, `SELECT COUNT(*) AS total\nFROM ${ed};`, `${name}_count.sql`, { run: true, schema, table: name, database }) },
     "sep",
     {
       label: "Script as",
@@ -210,10 +224,11 @@ function duplicate(cfg: ConnectionConfig, schema: string, name: string, withData
 export function routineMenu(cfg: ConnectionConfig, schema: string, name: string, kind: ObjectKind): MenuEntry[] {
   const k = cfg.kind;
   const full = fq(k, schema, name);
+  const ed = editorName(k, schema, name);
   const kw = kind === "procedure" ? "PROCEDURE" : kind === "trigger" ? "TRIGGER" : "FUNCTION";
-  const call = kind === "procedure" ? `CALL ${full}();` : `SELECT ${full}();`;
+  const call = kind === "procedure" ? `CALL ${ed}();` : `SELECT ${ed}();`;
   const items: MenuEntry[] = [];
-  if (kind !== "trigger") items.push({ label: kind === "procedure" ? "Script CALL" : "Script SELECT", icon: <Play />, onClick: () => openSql(cfg.id, call, `${name}.sql`) });
+  if (kind !== "trigger") items.push({ label: kind === "procedure" ? "Script CALL" : "Script SELECT", icon: <Play />, onClick: () => openSql(cfg.id, call, `${name}.sql`, { database: editorDb(k, schema) }) });
   items.push({ label: "Copy name", icon: <Copy />, onClick: () => copy(name) }, "sep", {
     label: `Drop ${kind}…`,
     icon: <Trash2 />,
@@ -246,8 +261,8 @@ export function schemaMenu(cfg: ConnectionConfig, schema: string): MenuEntry[] {
   const focused = !!f?.open && f.connId === cfg.id && f.schema === schema;
   return [
     ...(focused ? [] : ([{ label: "Focus", icon: <Crosshair />, onClick: () => st().setFocus({ connId: cfg.id, schema, open: true }) }, "sep"] as MenuEntry[])),
-    { label: "New query", icon: <FileCode />, onClick: () => openSql(cfg.id, k === "mysql" ? `USE ${s};\n\n` : `SET search_path TO ${s};\n\n`, `${schema}.sql`) },
-    { label: "Create table…", icon: <Plus />, onClick: () => openSql(cfg.id, createTableTemplate(k, schema), "new_table.sql") },
+    { label: "New query", icon: <FileCode />, onClick: () => openSql(cfg.id, k === "mysql" ? "" : `SET search_path TO ${s};\n\n`, `${schema}.sql`, { database: editorDb(k, schema) }) },
+    { label: "Create table…", icon: <Plus />, onClick: () => openSql(cfg.id, createTableTemplate(k, schema), "new_table.sql", { database: editorDb(k, schema) }) },
     { label: `Create ${word}…`, icon: <Database />, onClick: () => createSchema(cfg) },
     "sep",
     { label: "ER diagram…", icon: <Network />, onClick: () => st().setUi({ erDialog: { connId: cfg.id, schema } }) },
@@ -281,19 +296,20 @@ export function schemaMenu(cfg: ConnectionConfig, schema: string): MenuEntry[] {
 
 export function categoryMenu(cfg: ConnectionConfig, schema: string, category: string): MenuEntry[] {
   const items: MenuEntry[] = [];
-  if (category === "tables") items.push({ label: "Create table…", icon: <Plus />, onClick: () => openSql(cfg.id, createTableTemplate(cfg.kind, schema), "new_table.sql") });
+  const database = editorDb(cfg.kind, schema);
+  if (category === "tables") items.push({ label: "Create table…", icon: <Plus />, onClick: () => openSql(cfg.id, createTableTemplate(cfg.kind, schema), "new_table.sql", { database }) });
   if (category === "views")
     items.push({
       label: "Create view…",
       icon: <Plus />,
-      onClick: () => openSql(cfg.id, `CREATE VIEW ${fq(cfg.kind, schema, "new_view")} AS\nSELECT *\nFROM ${quoteIdent(schema, cfg.kind)}.table_name;`, "new_view.sql"),
+      onClick: () => openSql(cfg.id, `CREATE VIEW ${editorName(cfg.kind, schema, "new_view")} AS\nSELECT *\nFROM ${editorName(cfg.kind, schema, "table_name")};`, "new_view.sql", { database }),
     });
   items.push({ label: "Refresh", icon: <RefreshCw />, onClick: () => void st().refreshSchema(cfg.id) });
   return items;
 }
 
 function createTableTemplate(k: DbKind, schema: string) {
-  const t = fq(k, schema, "new_table");
+  const t = editorName(k, schema, "new_table");
   return k === "postgres"
     ? `CREATE TABLE ${t} (\n    id         bigserial PRIMARY KEY,\n    name       varchar(100) NOT NULL,\n    created_at timestamp NOT NULL DEFAULT now()\n);`
     : `CREATE TABLE ${t} (\n    id         BIGINT AUTO_INCREMENT PRIMARY KEY,\n    name       VARCHAR(100) NOT NULL,\n    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP\n);`;

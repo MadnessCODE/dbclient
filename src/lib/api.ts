@@ -239,11 +239,12 @@ export const api = {
   getTableStructure: (id: string, schema: string, table: string) =>
     invoke<TableStructure>("get_table_structure", { id, schema, table }),
   listCollations: (id: string) => invoke<string[]>("list_collations", { id }),
-  runQuery: (connId: string, queryId: string, sql: string, maxRows: number) =>
-    invoke<QueryOutput>("run_query", { connId, queryId, sql, maxRows }),
+  /** `database`: MySQL default database for unqualified names ("" = none) */
+  runQuery: (connId: string, queryId: string, sql: string, maxRows: number, database?: string) =>
+    invoke<QueryOutput>("run_query", { connId, queryId, sql, maxRows, database: database ?? null }),
   executeBatch: (connId: string, statements: string[]) => invoke<number[]>("execute_batch", { connId, statements }),
   cancelQuery: (queryId: string) => invoke<boolean>("cancel_query", { queryId }),
-  explainQuery: (connId: string, sql: string) => invoke<string>("explain_query", { connId, sql }),
+  explainQuery: (connId: string, sql: string, database?: string) => invoke<string>("explain_query", { connId, sql, database: database ?? null }),
   writeTextFile: (path: string, contents: string) => invoke<void>("write_text_file", { path, contents }),
   exportXlsx: (path: string, columns: { name: string; kind: string }[], rows: Cell[][], options: { sheet: string; header: boolean; nullAs: string }) =>
     invoke<void>("export_xlsx", { path, columns, rows, options }),
