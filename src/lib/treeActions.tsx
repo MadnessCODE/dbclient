@@ -31,7 +31,7 @@ import { quoteIdent } from "./sql";
 import { useStore, type MenuEntry } from "../store";
 import { baseId, dbOf, isMultiDb, subId } from "./connIds";
 import { isProduction } from "./connStyle";
-import { openDoctor } from "./doctor";
+import { openDbDoctor, openDoctor } from "./doctor";
 
 export type ObjectKind = "table" | "view" | "matview" | "function" | "procedure" | "trigger";
 
@@ -269,6 +269,7 @@ export function schemaMenu(cfg: ConnectionConfig, schema: string): MenuEntry[] {
     { label: `Create ${word}…`, icon: <Database />, onClick: () => createSchema(cfg) },
     "sep",
     { label: "ER diagram…", icon: <Network />, onClick: () => st().setUi({ erDialog: { connId: cfg.id, schema } }) },
+    { label: `Analyze ${word}`, icon: <Stethoscope />, hint: "Database Doctor: top issues across its tables", onClick: () => openDbDoctor(cfg.id, [schema], schema) },
     { label: `Import into ${schema}…`, icon: <FileUp />, onClick: () => st().setUi({ importDialog: { connId: cfg.id, database: schema } }) },
     { label: `Export ${word}…`, icon: <DatabaseBackup />, onClick: () => st().setUi({ dbExport: { connId: cfg.id, schema } }) },
     "sep",
@@ -355,6 +356,7 @@ export function databaseMenu(cfg: ConnectionConfig): MenuEntry[] {
     { label: `Import into ${db}…`, icon: <FileUp />, disabled: !connected, onClick: () => st().setUi({ importDialog: { connId: cfg.id } }) },
     { label: "Export database…", icon: <DatabaseBackup />, onClick: () => st().setUi({ dbExport: { connId: cfg.id } }) },
     { label: "Users & privileges…", icon: <UserCog />, disabled: !connected, onClick: () => st().setUi({ usersDialog: { connId: cfg.id } }) },
+    analyzeDatabaseItem(cfg, db),
     "sep",
     { label: "Copy name", icon: <Copy />, onClick: () => copy(db) },
     { label: "Rename database…", icon: <Pencil />, onClick: () => renameDatabase(cfg) },
@@ -517,6 +519,18 @@ BEGIN
 END $clear$;`;
 }
 
+/** Database Doctor over every non-system schema of a PostgreSQL database. */
+function analyzeDatabaseItem(cfg: ConnectionConfig, db: string): MenuEntry {
+  const schemas = st().conn[cfg.id]?.schema?.schemas.filter((s) => !s.system).map((s) => s.name) ?? [];
+  return {
+    label: "Analyze database",
+    icon: <Stethoscope />,
+    hint: "Database Doctor: top issues across all tables",
+    disabled: schemas.length === 0,
+    onClick: () => openDbDoctor(cfg.id, schemas, db),
+  };
+}
+
 export function connectionMenu(cfg: ConnectionConfig): MenuEntry[] {
   const status = st().conn[cfg.id]?.status;
   const connected = status === "connected";
@@ -541,6 +555,7 @@ export function connectionMenu(cfg: ConnectionConfig): MenuEntry[] {
       ? [{ label: "Export database…", icon: <DatabaseBackup />, disabled: !connected, onClick: () => st().setUi({ dbExport: { connId: cfg.id } }) } as MenuEntry]
       : []),
     { label: "Users & privileges…", icon: <UserCog />, disabled: !connected, onClick: () => st().setUi({ usersDialog: { connId: cfg.id } }) },
+    ...(cfg.kind === "postgres" && !isMultiDb(cfg) ? [analyzeDatabaseItem(cfg, cfg.database)] : []),
     "sep",
     { label: "Edit…", icon: <Pencil />, onClick: () => st().setUi({ connDialog: { open: true, editing: cfg } }) },
     {

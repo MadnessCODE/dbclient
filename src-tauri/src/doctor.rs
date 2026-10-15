@@ -25,6 +25,59 @@ pub struct TableHealth {
     pub findings: Vec<Finding>,
     /// What could not be checked, and why
     pub notes: Vec<String>,
+    pub columns: Vec<ColumnInfo>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ColumnInfo {
+    pub name: String,
+    pub data_type: String,
+}
+
+/// One table of a schema-wide scan (Database Doctor, tree badges).
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TableReport {
+    pub table: String,
+    pub rows: Option<i64>,
+    /// Table, indexes and TOAST
+    pub bytes: i64,
+    pub findings: Vec<Finding>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SchemaHealth {
+    pub tables: Vec<TableReport>,
+    pub notes: Vec<String>,
+}
+
+/// Value distribution of one column (Table Doctor's column analysis).
+#[derive(Debug, Default, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ColumnStats {
+    /// "pg_stats" or "sample"
+    pub source: String,
+    /// No statistics yet (PostgreSQL: the table needs ANALYZE)
+    pub missing: bool,
+    /// Rows the numbers describe: the table estimate, or the sample size
+    pub rows: Option<i64>,
+    pub null_pct: Option<f64>,
+    /// Distinct non-null values (PostgreSQL: planner estimate)
+    pub distinct: Option<i64>,
+    /// Most common values and their share of all rows, in percent
+    pub common: Vec<ValueShare>,
+    /// Equal-height histogram bounds (PostgreSQL)
+    pub histogram: Vec<String>,
+    /// Indexes whose first column this is
+    pub indexes: Vec<String>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct ValueShare {
+    pub value: Option<String>,
+    pub pct: f64,
 }
 
 #[derive(Debug, Default, Serialize)]
@@ -126,13 +179,153 @@ pub fn score(findings: &[Finding]) -> u8 {
     100u32.saturating_sub(penalty) as u8
 }
 
-pub async fn analyze(pool: &DbPool, schema: &str, table: &str) -> AppResult<TableHealth> {
-    let (stats, indexes, mut findings, notes) = match pool {
-        DbPool::Pg(_) => pg(pool, schema, table).await?,
-        DbPool::My(_) => my(pool, schema, table).await?,
+async fn scan(pool: &DbPool, schema: &str, only: Option<&str>) -> AppResult<Scan> {
+    let (mut tables, notes) = match pool {
+        DbPool::Pg(_) => pg_scan(pool, schema, only).await?,
+        DbPool::My(_) => my_scan(pool, schema, only).await?,
     };
-    findings.sort_by_key(|f| f.severity);
-    Ok(TableHealth { score: score(&findings), stats, indexes, findings, notes })
+    for (_, p) in &mut tables {
+        p.findings.sort_by_key(|f| f.severity);
+    }
+    Ok((tables, notes))
+}
+
+pub async fn analyze(pool: &DbPool, schema: &str, table: &str) -> AppResult<TableHealth> {
+    let (tables, mut notes) = scan(pool, schema, Some(table)).await?;
+    let (_, p) = tables.into_iter().next().ok_or_else(|| msg(format!("Table {schema}.{table} not found")))?;
+    notes.extend(p.notes);
+    Ok(TableHealth { score: score(&p.findings), stats: p.stats, indexes: p.indexes, findings: p.findings, notes, columns: p.columns })
+}
+
+/// Every table of a schema with one batch of catalog queries.
+pub async fn analyze_schema(pool: &DbPool, schema: &str) -> AppResult<SchemaHealth> {
+    let (tables, notes) = scan(pool, schema, None).await?;
+    let tables = tables
+        .into_iter()
+        .map(|(table, p)| TableReport {
+            table,
+            rows: p.stats.rows,
+            bytes: p.stats.table_bytes.unwrap_or(0) + p.stats.index_bytes.unwrap_or(0) + p.stats.toast_bytes.unwrap_or(0),
+            findings: p.findings,
+        })
+        .collect();
+    Ok(SchemaHealth { tables, notes })
+}
+
+/// Rows read for a MySQL column sample: enough for stable shares, bounded on big tables.
+const SAMPLE_ROWS: i64 = 100_000;
+
+pub async fn column_stats(pool: &DbPool, schema: &str, table: &str, column: &str) -> AppResult<ColumnStats> {
+    let mysql = matches!(pool, DbPool::My(_));
+    let (s, t, c) = (lit(schema, mysql), lit(table, mysql), lit(column, mysql));
+    let mut out = ColumnStats::default();
+    if !mysql {
+        out.source = "pg_stats".into();
+        out.indexes = pool
+            .text_rows(&format!(
+                "select i.relname from pg_index x
+                   join pg_class i on i.oid = x.indexrelid
+                   join pg_class t on t.oid = x.indrelid
+                   join pg_namespace n on n.oid = t.relnamespace
+                   join pg_attribute a on a.attrelid = t.oid and a.attnum = x.indkey[0]
+                  where n.nspname = {s} and t.relname = {t} and a.attname = {c}
+                  order by 1"
+            ))
+            .await?
+            .iter()
+            .map(|r| text(&r[0]))
+            .collect();
+        let rows = pool
+            .text_rows(&format!(
+                "select c.reltuples::bigint, p.null_frac, p.n_distinct, p.most_common_vals::text, p.most_common_freqs::text, p.histogram_bounds::text
+                   from pg_class c
+                   join pg_namespace n on n.oid = c.relnamespace
+                   left join pg_stats p on p.schemaname = n.nspname and p.tablename = c.relname and p.attname = {c} and not p.inherited
+                  where n.nspname = {s} and c.relname = {t}"
+            ))
+            .await?;
+        let r = rows.first().ok_or_else(|| msg(format!("Table {schema}.{table} not found")))?;
+        let total = int(&r[0]).filter(|n| *n >= 0);
+        out.rows = total;
+        let Some(null_frac) = r[1].as_deref().and_then(|v| v.parse::<f64>().ok()) else {
+            out.missing = true;
+            return Ok(out);
+        };
+        out.null_pct = Some(null_frac * 100.0);
+        // negative n_distinct is a fraction of the rows (grows with the table)
+        let nd = r[2].as_deref().and_then(|v| v.parse::<f64>().ok()).unwrap_or(0.0);
+        out.distinct = Some(if nd >= 0.0 { nd as i64 } else { (-nd * total.unwrap_or(0) as f64 * (1.0 - null_frac)).round() as i64 });
+        let vals = pg_array(&text(&r[3]));
+        let freqs: Vec<f64> = pg_array(&text(&r[4])).iter().filter_map(|f| f.as_deref()?.parse().ok()).collect();
+        out.common = vals.into_iter().zip(freqs).take(20).map(|(value, f)| ValueShare { value, pct: f * 100.0 }).collect();
+        out.histogram = pg_array(&text(&r[5])).into_iter().map(|v| v.unwrap_or_default()).collect();
+        return Ok(out);
+    }
+
+    out.source = "sample".into();
+    out.indexes = pool
+        .text_rows(&format!(
+            "select index_name from information_schema.statistics
+              where table_schema = {s} and table_name = {t} and column_name = {c} and seq_in_index = 1 order by 1"
+        ))
+        .await?
+        .iter()
+        .map(|r| text(&r[0]))
+        .collect();
+    let (col, from) = (qi(true, column), format!("{}.{}", qi(true, schema), qi(true, table)));
+    let sample = format!("(select {col} as v from {from} limit {SAMPLE_ROWS}) s");
+    let head = pool.text_rows(&format!("select count(*), count(v), count(distinct v) from {sample}")).await?;
+    let head = head.first().ok_or_else(|| msg("Server returned no rows"))?;
+    let n = int(&head[0]).unwrap_or(0);
+    out.rows = Some(n);
+    if n == 0 {
+        out.missing = true;
+        return Ok(out);
+    }
+    out.null_pct = Some((n - int(&head[1]).unwrap_or(0)) as f64 * 100.0 / n as f64);
+    out.distinct = int(&head[2]);
+    out.common = pool
+        .text_rows(&format!("select v, count(*) from {sample} where v is not null group by v order by 2 desc limit 10"))
+        .await?
+        .iter()
+        .map(|r| ValueShare { value: r[0].clone(), pct: int(&r[1]).unwrap_or(0) as f64 * 100.0 / n as f64 })
+        .collect();
+    Ok(out)
+}
+
+/// Elements of a PostgreSQL array literal ({a,"b c",NULL}).
+fn pg_array(s: &str) -> Vec<Option<String>> {
+    let inner = s.trim().strip_prefix('{').and_then(|s| s.strip_suffix('}')).unwrap_or("");
+    let mut out = Vec::new();
+    let mut chars = inner.chars().peekable();
+    while chars.peek().is_some() {
+        let mut item = String::new();
+        let quoted = chars.peek() == Some(&'"');
+        if quoted {
+            chars.next();
+            while let Some(ch) = chars.next() {
+                match ch {
+                    '\\' => item.extend(chars.next()),
+                    '"' => break,
+                    _ => item.push(ch),
+                }
+            }
+            while chars.peek().is_some_and(|c| *c != ',') {
+                chars.next();
+            }
+        } else {
+            while let Some(&ch) = chars.peek() {
+                if ch == ',' {
+                    break;
+                }
+                item.push(ch);
+                chars.next();
+            }
+        }
+        chars.next(); // the comma
+        out.push(if !quoted && item == "NULL" { None } else { Some(item) });
+    }
+    out
 }
 
 // ---------- helpers ----------
@@ -281,52 +474,53 @@ fn overlaps(keys: &[IndexKey]) -> Vec<(usize, usize, bool)> {
 
 // ---------- PostgreSQL ----------
 
-type Parts = (TableStats, Vec<IndexUsage>, Vec<Finding>, Vec<String>);
+struct Parts {
+    stats: TableStats,
+    indexes: Vec<IndexUsage>,
+    findings: Vec<Finding>,
+    /// Notes about this table only
+    notes: Vec<String>,
+    columns: Vec<ColumnInfo>,
+}
+
+/// Tables of a scan, and notes that apply to all of them.
+type Scan = (Vec<(String, Parts)>, Vec<String>);
+
+fn rows_of<'a>(m: &HashMap<String, Vec<&'a [Cell]>>, key: &str) -> Vec<&'a [Cell]> {
+    m.get(key).cloned().unwrap_or_default()
+}
+
+/// Rows grouped by their first column, which is dropped.
+fn by_first(rows: &[Vec<Cell>]) -> HashMap<String, Vec<&[Cell]>> {
+    let mut m: HashMap<String, Vec<&[Cell]>> = HashMap::new();
+    for r in rows {
+        m.entry(text(&r[0])).or_default().push(&r[1..]);
+    }
+    m
+}
 
 fn int2vec(c: &Cell) -> Vec<i64> {
     text(c).trim_matches(|ch| ch == '{' || ch == '}').split([' ', ',']).filter_map(|s| s.parse().ok()).collect()
 }
 
-async fn pg(pool: &DbPool, schema: &str, table: &str) -> AppResult<Parts> {
-    let (s, t) = (lit(schema, false), lit(table, false));
-    let ver = pool.text_rows("select current_setting('server_version_num')").await?;
-    let ver = ver.first().and_then(|r| int(&r[0])).unwrap_or(0);
-    let nkey = if ver >= 110000 { "x.indnkeyatts" } else { "x.indnatts" };
-
-    let rows = pool
-        .text_rows(&format!(
-            "select c.oid, c.relkind, c.reltuples::bigint, pg_relation_size(c.oid), pg_table_size(c.oid) - pg_relation_size(c.oid),
-                    pg_indexes_size(c.oid), s.n_live_tup, s.n_dead_tup, s.seq_scan, s.seq_tup_read, s.idx_scan, s.n_mod_since_analyze,
-                    extract(epoch from now() - greatest(s.last_vacuum, s.last_autovacuum))::bigint,
-                    extract(epoch from now() - greatest(s.last_analyze, s.last_autoanalyze))::bigint,
-                    coalesce(array_to_string(c.reloptions, ','), ''),
-                    (select extract(epoch from now() - stats_reset)::bigint from pg_stat_database where datname = current_database()),
-                    (select sum(avg_width) from pg_stats p where p.schemaname = n.nspname and p.tablename = c.relname),
-                    current_setting('block_size')::int
-               from pg_class c
-               join pg_namespace n on n.oid = c.relnamespace
-               left join pg_stat_user_tables s on s.relid = c.oid
-              where n.nspname = {s} and c.relname = {t} and c.relkind in ('r', 'p', 'm')"
-        ))
-        .await?;
-    let r = rows.into_iter().next().ok_or_else(|| msg(format!("Table {schema}.{table} not found")))?;
-    let oid = text(&r[0]);
-    let relkind = text(&r[1]);
-    let partitioned = relkind == "p";
-    let reltuples = int(&r[2]).unwrap_or(-1);
-    let heap = int(&r[3]).unwrap_or(0);
-    let live = int(&r[6]);
-    let dead = int(&r[7]);
-    let seq = int(&r[8]);
-    let seq_read = int(&r[9]).unwrap_or(0);
-    let idx = int(&r[10]);
-    let modified = int(&r[11]);
-    let vacuumed = int(&r[12]);
-    let analyzed = int(&r[13]);
-    let reloptions = text(&r[14]);
-    let usage_secs = int(&r[15]);
+/// Findings for one table of a PostgreSQL scan: its row of the table query and its index,
+/// foreign key and column rows (without the leading oid).
+fn pg_table(schema: &str, r: &[Cell], idx_rows: &[&[Cell]], fk_rows: &[&[Cell]], col_rows: &[&[Cell]], usage_secs: Option<i64>, block: i64) -> Parts {
+    let table = text(&r[1]);
+    let table = table.as_str();
+    let partitioned = text(&r[2]) == "p";
+    let reltuples = int(&r[3]).unwrap_or(-1);
+    let heap = int(&r[4]).unwrap_or(0);
+    let live = int(&r[7]);
+    let dead = int(&r[8]);
+    let seq = int(&r[9]);
+    let seq_read = int(&r[10]).unwrap_or(0);
+    let idx = int(&r[11]);
+    let modified = int(&r[12]);
+    let vacuumed = int(&r[13]);
+    let analyzed = int(&r[14]);
+    let reloptions = text(&r[15]);
     let width = int(&r[16]);
-    let block = int(&r[17]).unwrap_or(8192);
 
     let rows_est = if reltuples >= 0 { reltuples } else { live.unwrap_or(0) };
     let total_tup = live.unwrap_or(0) + dead.unwrap_or(0);
@@ -350,8 +544,8 @@ async fn pg(pool: &DbPool, schema: &str, table: &str) -> AppResult<Parts> {
     let mut stats = TableStats {
         rows: Some(rows_est),
         table_bytes: Some(heap),
-        index_bytes: int(&r[5]),
-        toast_bytes: int(&r[4]),
+        index_bytes: int(&r[6]),
+        toast_bytes: int(&r[5]),
         live_bytes: live_b,
         dead_bytes: dead_b,
         free_bytes: free_b,
@@ -379,29 +573,12 @@ async fn pg(pool: &DbPool, schema: &str, table: &str) -> AppResult<Parts> {
         notes.push("Partitioned table: sizes, row counts and vacuum statistics are kept per partition, so they are not shown here.".into());
     }
 
-    // indexes
-    let idx_rows = pool
-        .text_rows(&format!(
-            "select i.relname, x.indisprimary, x.indisunique, x.indisvalid, pg_relation_size(i.oid), s.idx_scan,
-                    pg_get_indexdef(x.indexrelid), x.indkey::text, {nkey}, x.indnatts, coalesce(pg_get_expr(x.indpred, x.indrelid), ''),
-                    am.amname,
-                    exists (select 1 from pg_constraint k where k.conindid = x.indexrelid and k.conrelid = x.indrelid and k.contype in ('p', 'u', 'x')),
-                    array_to_string(array(select pg_get_indexdef(x.indexrelid, g, true) from generate_series(1, {nkey}) g order by g), chr(31)),
-                    x.indclass::text, x.indoption::text, x.indcollation::text
-               from pg_index x
-               join pg_class i on i.oid = x.indexrelid
-               join pg_am am on am.oid = i.relam
-               left join pg_stat_user_indexes s on s.indexrelid = x.indexrelid
-              where x.indrelid = {oid}
-              order by i.relname"
-        ))
-        .await?;
 
     let mut indexes = Vec::new();
     let mut keys = Vec::new();
     // per index: key column numbers if it can support a foreign key (valid, not partial)
     let mut fk_support: Vec<Vec<i64>> = Vec::new();
-    for r in &idx_rows {
+    for r in idx_rows {
         let name = text(&r[0]);
         let primary = flag(&r[1]);
         let unique = flag(&r[2]);
@@ -440,14 +617,6 @@ async fn pg(pool: &DbPool, schema: &str, table: &str) -> AppResult<Parts> {
     };
     let young_stats = usage_secs.is_some_and(|s| s < 7 * DAY);
     // foreign keys: an index whose leading columns are the FK columns supports it
-    let fk_rows = pool
-        .text_rows(&format!(
-            "select k.conname, k.conkey::text, k.confrelid::regclass::text,
-                    array_to_string(array(select a.attname from unnest(k.conkey) with ordinality u(n, o)
-                                          join pg_attribute a on a.attrelid = k.conrelid and a.attnum = u.n order by u.o), chr(31))
-               from pg_constraint k where k.contype = 'f' and k.conrelid = {oid} order by k.conname"
-        ))
-        .await?;
     let fk_sets: Vec<HashSet<i64>> = fk_rows.iter().map(|r| int2vec(&r[1]).into_iter().collect()).collect();
     let supports = |ix: &Vec<i64>, fk: &HashSet<i64>| ix.len() >= fk.len() && ix[..fk.len()].iter().copied().collect::<HashSet<_>>() == *fk;
     // never suggested for removal: deletes in the referenced table need them even if rarely
@@ -616,14 +785,8 @@ async fn pg(pool: &DbPool, schema: &str, table: &str) -> AppResult<Parts> {
     }
 
     // float columns that look like money
-    let cols = pool
-        .text_rows(&format!(
-            "select a.attname, format_type(a.atttypid, a.atttypmod) from pg_attribute a
-              where a.attrelid = {oid} and a.attnum > 0 and not a.attisdropped and a.atttypid in ('float4'::regtype, 'float8'::regtype)
-              order by a.attnum"
-        ))
-        .await?;
-    for r in cols.iter().filter(|r| money_like(&text(&r[0]))) {
+    let floats = col_rows.iter().filter(|r| matches!(text(&r[1]).as_str(), "real" | "double precision"));
+    for r in floats.filter(|r| money_like(&text(&r[0]))) {
         let c = text(&r[0]);
         findings.push(
             finding(format!("float-money:{c}"), Severity::Info, format!("{c} stores money as a float"),
@@ -633,33 +796,110 @@ async fn pg(pool: &DbPool, schema: &str, table: &str) -> AppResult<Parts> {
         );
     }
 
-    Ok((stats, indexes, findings, notes))
+    let columns = col_rows.iter().map(|r| ColumnInfo { name: text(&r[0]), data_type: text(&r[1]) }).collect();
+    Parts { stats, indexes, findings, notes, columns }
+}
+
+async fn pg_scan(pool: &DbPool, schema: &str, only: Option<&str>) -> AppResult<Scan> {
+    let s = lit(schema, false);
+    // one table (views of it too), or every table of the schema
+    let (filter, kinds) = match only {
+        Some(t) => (format!(" and c.relname = {}", lit(t, false)), "'r', 'p', 'm'"),
+        None => (String::new(), "'r', 'p'"),
+    };
+    let rels = format!("select c.oid from pg_class c join pg_namespace n on n.oid = c.relnamespace where n.nspname = {s}{filter} and c.relkind in ({kinds})");
+    let g = pool
+        .text_rows(
+            "select current_setting('server_version_num')::int, current_setting('block_size')::int,
+                    (select extract(epoch from now() - stats_reset)::bigint from pg_stat_database where datname = current_database())",
+        )
+        .await?;
+    let g = g.first().ok_or_else(|| msg("Server returned no rows"))?;
+    let nkey = if int(&g[0]).unwrap_or(0) >= 110000 { "x.indnkeyatts" } else { "x.indnatts" };
+    let block = int(&g[1]).unwrap_or(8192);
+    let usage_secs = int(&g[2]);
+
+    let tables = pool
+        .text_rows(&format!(
+            "select c.oid, c.relname, c.relkind, c.reltuples::bigint, pg_relation_size(c.oid), pg_table_size(c.oid) - pg_relation_size(c.oid),
+                    pg_indexes_size(c.oid), s.n_live_tup, s.n_dead_tup, s.seq_scan, s.seq_tup_read, s.idx_scan, s.n_mod_since_analyze,
+                    extract(epoch from now() - greatest(s.last_vacuum, s.last_autovacuum))::bigint,
+                    extract(epoch from now() - greatest(s.last_analyze, s.last_autoanalyze))::bigint,
+                    coalesce(array_to_string(c.reloptions, ','), ''), w.width
+               from pg_class c
+               left join pg_stat_user_tables s on s.relid = c.oid
+               left join (select tablename, sum(avg_width)::bigint as width from pg_stats where schemaname = {s} group by tablename) w
+                      on w.tablename = c.relname
+              where c.oid in ({rels})
+              order by c.relname"
+        ))
+        .await?;
+    let idx_rows = pool
+        .text_rows(&format!(
+            "select x.indrelid, i.relname, x.indisprimary, x.indisunique, x.indisvalid, pg_relation_size(i.oid), s.idx_scan,
+                    pg_get_indexdef(x.indexrelid), x.indkey::text, {nkey}, x.indnatts, coalesce(pg_get_expr(x.indpred, x.indrelid), ''),
+                    am.amname,
+                    exists (select 1 from pg_constraint k where k.conindid = x.indexrelid and k.conrelid = x.indrelid and k.contype in ('p', 'u', 'x')),
+                    array_to_string(array(select pg_get_indexdef(x.indexrelid, g, true) from generate_series(1, {nkey}) g order by g), chr(31)),
+                    x.indclass::text, x.indoption::text, x.indcollation::text
+               from pg_index x
+               join pg_class i on i.oid = x.indexrelid
+               join pg_am am on am.oid = i.relam
+               left join pg_stat_user_indexes s on s.indexrelid = x.indexrelid
+              where x.indrelid in ({rels})
+              order by i.relname"
+        ))
+        .await?;
+    let fk_rows = pool
+        .text_rows(&format!(
+            "select k.conrelid, k.conname, k.conkey::text, k.confrelid::regclass::text,
+                    array_to_string(array(select a.attname from unnest(k.conkey) with ordinality u(n, o)
+                                          join pg_attribute a on a.attrelid = k.conrelid and a.attnum = u.n order by u.o), chr(31))
+               from pg_constraint k where k.contype = 'f' and k.conrelid in ({rels}) order by k.conname"
+        ))
+        .await?;
+    let col_rows = pool
+        .text_rows(&format!(
+            "select a.attrelid, a.attname, format_type(a.atttypid, a.atttypmod) from pg_attribute a
+              where a.attrelid in ({rels}) and a.attnum > 0 and not a.attisdropped
+              order by a.attrelid, a.attnum"
+        ))
+        .await?;
+    let (idx, fks, cols) = (by_first(&idx_rows), by_first(&fk_rows), by_first(&col_rows));
+    let tables = tables
+        .iter()
+        .map(|r| {
+            let oid = text(&r[0]);
+            (text(&r[1]), pg_table(schema, r, &rows_of(&idx, &oid), &rows_of(&fks, &oid), &rows_of(&cols, &oid), usage_secs, block))
+        })
+        .collect();
+    Ok((tables, Vec::new()))
 }
 
 // ---------- MySQL / MariaDB ----------
 
-async fn my(pool: &DbPool, schema: &str, table: &str) -> AppResult<Parts> {
-    let (s, t) = (lit(schema, true), lit(table, true));
+/// performance_schema reads of one table: (index or None for full scans, count_star, count_read)
+type IndexReads = Vec<(Option<String>, i64, i64)>;
+
+/// What a MySQL scan knows for the whole schema.
+struct MyCtx {
+    /// Seconds since the persistent statistics were updated, per table
+    analyzed: HashMap<String, i64>,
+    /// (table, index) -> bytes
+    index_sizes: HashMap<(String, String), i64>,
+    usage: Option<HashMap<String, IndexReads>>,
+    uptime: Option<i64>,
+}
+
+/// Findings for one table of a MySQL scan: its information_schema.tables row and its index,
+/// foreign key and column rows (without the leading table name).
+fn my_table(schema: &str, r: &[Cell], idx_rows: &[&[Cell]], fk_rows: &[&[Cell]], col_rows: &[&[Cell]], ctx: &MyCtx) -> Parts {
+    let table = text(&r[0]);
+    let table = table.as_str();
+    let r = &r[1..];
     let full = format!("{}.{}", qi(true, schema), qi(true, table));
-    let mut notes = Vec::new();
+    let notes = Vec::new();
     let mut findings = Vec::new();
-
-    let version = pool.text_rows("select version()").await?.first().map(|r| text(&r[0])).unwrap_or_default();
-    let mariadb = version.to_lowercase().contains("mariadb");
-    // MySQL 8 caches information_schema sizes for a day by default
-    let fresh = if !mariadb && !version.starts_with("5.") { "set session information_schema_stats_expiry = 0; " } else { "" };
-
-    let rows = pool
-        .text_rows(&format!(
-            "{fresh}select engine, table_rows, data_length, index_length, data_free, table_collation,
-                    coalesce(create_options, ''), timestampdiff(second, update_time, now()), table_type
-               from information_schema.tables where table_schema = {s} and table_name = {t}"
-        ))
-        .await?;
-    let r = rows.into_iter().next().ok_or_else(|| msg(format!("Table {schema}.{table} not found")))?;
-    if text(&r[8]) != "BASE TABLE" {
-        return Err(msg(format!("{schema}.{table} is a view")));
-    }
     let engine = text(&r[0]);
     let rows_est = int(&r[1]).unwrap_or(0);
     let data = int(&r[2]).unwrap_or(0);
@@ -667,69 +907,25 @@ async fn my(pool: &DbPool, schema: &str, table: &str) -> AppResult<Parts> {
     let free = int(&r[4]).unwrap_or(0);
     let updated = int(&r[7]);
     let innodb = engine.eq_ignore_ascii_case("InnoDB");
-
-    // persistent InnoDB statistics: needs read access to the mysql schema
-    let (mut analyzed, mut index_sizes) = (None, HashMap::new());
-    if innodb {
-        match pool
-            .text_rows(&format!(
-                "select timestampdiff(second, last_update, now()) from mysql.innodb_table_stats where database_name = {s} and table_name = {t}"
-            ))
-            .await
-        {
-            Ok(rows) => analyzed = rows.first().and_then(|r| int(&r[0])),
-            Err(_) => notes.push("No access to mysql.innodb_table_stats: the age of the statistics is unknown.".into()),
-        }
-        if let Ok(rows) = pool
-            .text_rows(&format!(
-                "select index_name, stat_value * @@innodb_page_size from mysql.innodb_index_stats
-                  where database_name = {s} and table_name = {t} and stat_name = 'size'"
-            ))
-            .await
-        {
-            index_sizes = rows.iter().filter_map(|r| Some((text(&r[0]), int(&r[1])?))).collect();
-        }
-    }
-
-    // index usage from performance_schema (since server start)
-    let ps_on = pool.text_rows("select @@performance_schema").await.ok().and_then(|r| r.first().map(|r| flag(&r[0]))).unwrap_or(false);
+    let analyzed = if innodb { ctx.analyzed.get(table).copied() } else { None };
+    let uptime = ctx.uptime;
     let mut usage: Option<HashMap<String, i64>> = None;
     let (mut full_reads, mut index_reads) = (None, None);
-    let mut uptime = None;
-    if ps_on {
-        match pool
-            .text_rows(&format!(
-                "select index_name, count_star, count_read from performance_schema.table_io_waits_summary_by_index_usage
-                  where object_schema = {s} and object_name = {t}"
-            ))
-            .await
-        {
-            Ok(rows) if !rows.is_empty() => {
-                let mut m = HashMap::new();
-                let (mut f, mut i) = (0, 0);
-                for r in &rows {
-                    match &r[0] {
-                        None => f += int(&r[2]).unwrap_or(0),
-                        Some(name) => {
-                            m.insert(name.clone(), int(&r[1]).unwrap_or(0));
-                            i += int(&r[2]).unwrap_or(0);
-                        }
-                    }
+    if let Some(rows) = ctx.usage.as_ref().map(|u| u.get(table).map(Vec::as_slice).unwrap_or_default()) {
+        let mut m = HashMap::new();
+        let (mut f, mut i) = (0, 0);
+        for (name, star, read) in rows {
+            match name {
+                None => f += read,
+                Some(name) => {
+                    m.insert(name.clone(), *star);
+                    i += read;
                 }
-                usage = Some(m);
-                full_reads = Some(f);
-                index_reads = Some(i);
             }
-            Ok(_) => notes.push("performance_schema has no I/O statistics for this table yet: index usage is unknown.".into()),
-            Err(_) => notes.push("No access to performance_schema: index usage is unknown.".into()),
         }
-        uptime = pool
-            .text_rows("select variable_value from performance_schema.global_status where variable_name = 'Uptime'")
-            .await
-            .ok()
-            .and_then(|r| r.first().and_then(|r| int(&r[0])));
-    } else {
-        notes.push("performance_schema is off on this server: index usage and full-scan statistics are unknown.".into());
+        usage = Some(m);
+        full_reads = Some(f);
+        index_reads = Some(i);
     }
 
     let seq_pct = match (full_reads, index_reads) {
@@ -757,17 +953,9 @@ async fn my(pool: &DbPool, schema: &str, table: &str) -> AppResult<Parts> {
         usage_secs: uptime,
     };
 
-    // indexes
-    let idx_rows = pool
-        .text_rows(&format!(
-            "select index_name, non_unique, coalesce(column_name, '(expression)'), sub_part, index_type
-               from information_schema.statistics where table_schema = {s} and table_name = {t}
-              order by index_name = 'PRIMARY' desc, index_name, seq_in_index"
-        ))
-        .await?;
     let mut indexes: Vec<IndexUsage> = Vec::new();
     let mut keys: Vec<IndexKey> = Vec::new();
-    for r in &idx_rows {
+    for r in idx_rows {
         let name = text(&r[0]);
         let col = match int(&r[3]) {
             Some(n) => format!("{}({n})", text(&r[2])),
@@ -794,7 +982,7 @@ async fn my(pool: &DbPool, schema: &str, table: &str) -> AppResult<Parts> {
         indexes.push(IndexUsage {
             name: name.clone(),
             columns: vec![col],
-            bytes: index_sizes.get(&name).copied(),
+            bytes: ctx.index_sizes.get(&(table.to_owned(), name.clone())).copied(),
             scans,
             primary,
             unique,
@@ -818,25 +1006,13 @@ async fn my(pool: &DbPool, schema: &str, table: &str) -> AppResult<Parts> {
     }
 
     // foreign keys: supporting index and matching column types
-    let fk_rows = pool
-        .text_rows(&format!(
-            "select k.constraint_name, k.column_name, k.referenced_table_schema, k.referenced_table_name, k.referenced_column_name,
-                    c.column_type, c.character_set_name, c.collation_name, rc.column_type, rc.character_set_name, rc.collation_name
-               from information_schema.key_column_usage k
-               join information_schema.columns c on c.table_schema = k.table_schema and c.table_name = k.table_name and c.column_name = k.column_name
-               left join information_schema.columns rc on rc.table_schema = k.referenced_table_schema
-                    and rc.table_name = k.referenced_table_name and rc.column_name = k.referenced_column_name
-              where k.table_schema = {s} and k.table_name = {t} and k.referenced_table_name is not null
-              order by k.constraint_name, k.ordinal_position"
-        ))
-        .await?;
-    let mut fks: Vec<(String, String, Vec<Cell>)> = Vec::new();
+    let mut fks: Vec<(String, String)> = Vec::new();
     let mut fk_cols: HashMap<String, Vec<String>> = HashMap::new();
-    for r in &fk_rows {
+    for r in fk_rows {
         let name = text(&r[0]);
         fk_cols.entry(name.clone()).or_default().push(text(&r[1]));
-        if !fks.iter().any(|(n, _, _)| *n == name) {
-            fks.push((name, format!("{}.{}", text(&r[2]), text(&r[3])), r.clone()));
+        if !fks.iter().any(|(n, _)| *n == name) {
+            fks.push((name, format!("{}.{}", text(&r[2]), text(&r[3]))));
         }
     }
     let supports = |k: &IndexKey, cols: &Vec<String>| k.cols.len() >= cols.len() && k.cols[..cols.len()].iter().collect::<HashSet<_>>() == cols.iter().collect();
@@ -896,7 +1072,7 @@ async fn my(pool: &DbPool, schema: &str, table: &str) -> AppResult<Parts> {
         );
     }
 
-    for (name, target, _) in &fks {
+    for (name, target) in &fks {
         let cols = &fk_cols[name];
         if keys.iter().any(|k| supports(k, cols)) {
             continue;
@@ -911,7 +1087,7 @@ async fn my(pool: &DbPool, schema: &str, table: &str) -> AppResult<Parts> {
                 .fix("Create index", format!("ALTER TABLE {full} ADD INDEX {} ({col_sql}), ALGORITHM=INPLACE, LOCK=NONE;", qi(true, &idx_name)), Some("Online index build: reads and writes continue."), true),
         );
     }
-    for r in &fk_rows {
+    for r in fk_rows {
         let (ctype, cset, ccoll) = (text(&r[5]), text(&r[6]), text(&r[7]));
         let (rtype, rset, rcoll) = (text(&r[8]), text(&r[9]), text(&r[10]));
         if r[8].is_none() || (ctype == rtype && cset == rset && ccoll == rcoll) {
@@ -975,14 +1151,8 @@ async fn my(pool: &DbPool, schema: &str, table: &str) -> AppResult<Parts> {
         );
     }
 
-    let cols = pool
-        .text_rows(&format!(
-            "select column_name, column_type from information_schema.columns
-              where table_schema = {s} and table_name = {t} and data_type in ('float', 'double', 'real')
-              order by ordinal_position"
-        ))
-        .await?;
-    for r in cols.iter().filter(|r| money_like(&text(&r[0]))) {
+    let floats = col_rows.iter().filter(|r| matches!(text(&r[2]).as_str(), "float" | "double" | "real"));
+    for r in floats.filter(|r| money_like(&text(&r[0]))) {
         let c = text(&r[0]);
         findings.push(
             finding(format!("float-money:{c}"), Severity::Info, format!("{c} stores money as a float"),
@@ -991,7 +1161,130 @@ async fn my(pool: &DbPool, schema: &str, table: &str) -> AppResult<Parts> {
         );
     }
 
-    Ok((stats, indexes, findings, notes))
+    let columns = col_rows.iter().map(|r| ColumnInfo { name: text(&r[0]), data_type: text(&r[1]) }).collect();
+    Parts { stats, indexes, findings, notes, columns }
+}
+
+async fn my_scan(pool: &DbPool, schema: &str, only: Option<&str>) -> AppResult<Scan> {
+    let s = lit(schema, true);
+    let filter = |col: &str| only.map(|t| format!(" and {col} = {}", lit(t, true))).unwrap_or_default();
+    let mut notes = Vec::new();
+
+    let version = pool.text_rows("select version()").await?.first().map(|r| text(&r[0])).unwrap_or_default();
+    let mariadb = version.to_lowercase().contains("mariadb");
+    // MySQL 8 caches information_schema sizes for a day by default
+    let fresh = if !mariadb && !version.starts_with("5.") { "set session information_schema_stats_expiry = 0; " } else { "" };
+
+    let tables = pool
+        .text_rows(&format!(
+            "{fresh}select table_name, engine, table_rows, data_length, index_length, data_free, table_collation,
+                    coalesce(create_options, ''), timestampdiff(second, update_time, now()), table_type
+               from information_schema.tables where table_schema = {s}{} order by table_name",
+            filter("table_name")
+        ))
+        .await?;
+    if let Some(t) = only {
+        match tables.first() {
+            None => return Err(msg(format!("Table {schema}.{t} not found"))),
+            Some(r) if text(&r[9]) != "BASE TABLE" => return Err(msg(format!("{schema}.{t} is a view"))),
+            _ => {}
+        }
+    }
+    let tables: Vec<_> = tables.into_iter().filter(|r| text(&r[9]) == "BASE TABLE").collect();
+
+    // persistent InnoDB statistics: needs read access to the mysql schema
+    let analyzed = match pool
+        .text_rows(&format!(
+            "select table_name, timestampdiff(second, last_update, now()) from mysql.innodb_table_stats where database_name = {s}{}",
+            filter("table_name")
+        ))
+        .await
+    {
+        Ok(rows) => rows.iter().filter_map(|r| Some((text(&r[0]), int(&r[1])?))).collect(),
+        Err(_) => {
+            notes.push("No access to mysql.innodb_table_stats: the age of the statistics and index sizes are unknown.".into());
+            HashMap::new()
+        }
+    };
+    let index_sizes = pool
+        .text_rows(&format!(
+            "select table_name, index_name, stat_value * @@innodb_page_size from mysql.innodb_index_stats
+              where database_name = {s}{} and stat_name = 'size'",
+            filter("table_name")
+        ))
+        .await
+        .map(|rows| rows.iter().filter_map(|r| Some(((text(&r[0]), text(&r[1])), int(&r[2])?))).collect())
+        .unwrap_or_default();
+
+    // index usage from performance_schema (since server start)
+    let ps_on = pool.text_rows("select @@performance_schema").await.ok().and_then(|r| r.first().map(|r| flag(&r[0]))).unwrap_or(false);
+    let (mut usage, mut uptime) = (None, None);
+    if ps_on {
+        match pool
+            .text_rows(&format!(
+                "select object_name, index_name, count_star, count_read from performance_schema.table_io_waits_summary_by_index_usage
+                  where object_schema = {s}{}",
+                filter("object_name")
+            ))
+            .await
+        {
+            Ok(rows) if !rows.is_empty() => {
+                let mut m: HashMap<String, IndexReads> = HashMap::new();
+                for r in &rows {
+                    m.entry(text(&r[0])).or_default().push((r[1].clone(), int(&r[2]).unwrap_or(0), int(&r[3]).unwrap_or(0)));
+                }
+                usage = Some(m);
+            }
+            Ok(_) => notes.push("performance_schema has no I/O statistics here yet: index usage is unknown.".into()),
+            Err(_) => notes.push("No access to performance_schema: index usage is unknown.".into()),
+        }
+        uptime = pool
+            .text_rows("select variable_value from performance_schema.global_status where variable_name = 'Uptime'")
+            .await
+            .ok()
+            .and_then(|r| r.first().and_then(|r| int(&r[0])));
+    } else {
+        notes.push("performance_schema is off on this server: index usage and full-scan statistics are unknown.".into());
+    }
+    let ctx = MyCtx { analyzed, index_sizes, usage, uptime };
+
+    let idx_rows = pool
+        .text_rows(&format!(
+            "select table_name, index_name, non_unique, coalesce(column_name, '(expression)'), sub_part, index_type
+               from information_schema.statistics where table_schema = {s}{}
+              order by table_name, index_name = 'PRIMARY' desc, index_name, seq_in_index",
+            filter("table_name")
+        ))
+        .await?;
+    let fk_rows = pool
+        .text_rows(&format!(
+            "select k.table_name, k.constraint_name, k.column_name, k.referenced_table_schema, k.referenced_table_name, k.referenced_column_name,
+                    c.column_type, c.character_set_name, c.collation_name, rc.column_type, rc.character_set_name, rc.collation_name
+               from information_schema.key_column_usage k
+               join information_schema.columns c on c.table_schema = k.table_schema and c.table_name = k.table_name and c.column_name = k.column_name
+               left join information_schema.columns rc on rc.table_schema = k.referenced_table_schema
+                    and rc.table_name = k.referenced_table_name and rc.column_name = k.referenced_column_name
+              where k.table_schema = {s}{} and k.referenced_table_name is not null
+              order by k.table_name, k.constraint_name, k.ordinal_position",
+            filter("k.table_name")
+        ))
+        .await?;
+    let col_rows = pool
+        .text_rows(&format!(
+            "select table_name, column_name, column_type, data_type from information_schema.columns
+              where table_schema = {s}{} order by table_name, ordinal_position",
+            filter("table_name")
+        ))
+        .await?;
+    let (idx, fks, cols) = (by_first(&idx_rows), by_first(&fk_rows), by_first(&col_rows));
+    let tables = tables
+        .iter()
+        .map(|r| {
+            let name = text(&r[0]);
+            (name.clone(), my_table(schema, r, &rows_of(&idx, &name), &rows_of(&fks, &name), &rows_of(&cols, &name), &ctx))
+        })
+        .collect();
+    Ok((tables, notes))
 }
 
 #[cfg(test)]
@@ -1027,6 +1320,13 @@ mod tests {
         assert!(found.contains(&("dup1", "dup2", true)) || found.contains(&("dup1", "u_email", false)));
         assert!(!found.iter().any(|f| f.0 == "dup2" && f.1 == "dup1"));
         assert!(!found.iter().any(|f| f.0 == "pk" || f.0 == "u_email"));
+    }
+
+    #[test]
+    fn array_literals() {
+        assert_eq!(pg_array(r#"{a,"b c",NULL,"NULL","q\"x"}"#), vec![Some("a".into()), Some("b c".into()), None, Some("NULL".into()), Some("q\"x".into())]);
+        assert!(pg_array("").is_empty());
+        assert_eq!(pg_array("{1,2}").len(), 2);
     }
 
     #[test]

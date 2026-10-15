@@ -5,6 +5,8 @@ import {
   CircleCheck,
   ClipboardCopy,
   Clock,
+  Eye,
+  EyeOff,
   FileCode,
   Info,
   Lock,
@@ -15,20 +17,21 @@ import {
   Wrench,
 } from "lucide-react";
 import type { Finding, IndexUsage, Severity, TableHealth } from "../lib/api";
-import { analyzeTab, confirmFix, useDoctor } from "../lib/doctor";
+import { analyzeTab, confirmFix, openDoctor, refKey, scoreOf, setIgnored, splitIgnored, useDoctor, type DoctorRef } from "../lib/doctor";
+import { ColumnAnalysis } from "./ColumnAnalysis";
 import { useImports } from "../lib/importJobs";
 import { baseId, dbOf } from "../lib/connIds";
 import { useStore, type EditorTab } from "../store";
 import { formatBytes } from "./LeftPanel";
 import { Button, cx, DbIcon, EnvBadge, Spinner } from "./ui";
 
-const SEV: Record<Severity, { label: string; text: string; bg: string; icon: typeof Info }> = {
+export const SEV: Record<Severity, { label: string; text: string; bg: string; icon: typeof Info }> = {
   critical: { label: "Critical", text: "text-err", bg: "bg-err/15", icon: OctagonAlert },
   warning: { label: "Warning", text: "text-warn", bg: "bg-warn/15", icon: TriangleAlert },
   info: { label: "Info", text: "text-accent", bg: "bg-accent-soft", icon: Info },
 };
 
-const scoreColor = (s: number) => (s >= 80 ? "var(--ok)" : s >= 50 ? "var(--warn)" : "var(--err)");
+export const scoreColor = (s: number) => (s >= 80 ? "var(--ok)" : s >= 50 ? "var(--warn)" : "var(--err)");
 
 const num = (n: number | null | undefined) => (n == null ? "—" : n.toLocaleString());
 const pct = (p: number | null | undefined) => (p == null ? "—" : `${p < 10 ? p.toFixed(1) : Math.round(p)}%`);
@@ -60,13 +63,16 @@ export function TableDoctor({ tab }: { tab: EditorTab }) {
 
   const d = tab.doctor!;
   const h = res?.health;
+  const ref: DoctorRef = { connId: tab.connId ?? "", schema: d.schema, table: d.table };
+  const ignoredIds = useStore((s) => s.doctorIgnored[refKey(ref)]);
+  const { active, ignored } = splitIgnored(h?.findings ?? [], ignoredIds ?? []);
   const db = dbOf(tab.connId);
   const where = [cfg?.name, db].filter(Boolean).join(" / ");
 
   return (
     <div className="flex min-h-0 flex-1 flex-col overflow-y-auto">
       <header className="flex items-center gap-4 border-b border-line px-5 py-4">
-        <ScoreRing score={h?.score} loading={!!res?.loading && !h} />
+        <ScoreRing score={h ? scoreOf(active) : undefined} loading={!!res?.loading && !h} />
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-2">
             <Stethoscope size={16} className="shrink-0 text-accent" />
@@ -82,7 +88,7 @@ export function TableDoctor({ tab }: { tab: EditorTab }) {
             {h?.stats.engine && <span>· {h.stats.engine}</span>}
             {res?.at && <span>· analyzed {ago(Math.round((Date.now() - res.at) / 1000))}</span>}
           </div>
-          {h && <Summary findings={h.findings} />}
+          {h && <Summary findings={active} ignored={ignored.length} />}
         </div>
         <Button onClick={() => void analyzeTab(tab.id)} disabled={res?.loading} className="h-9 px-4">
           {res?.loading ? <Spinner /> : <RefreshCw size={15} />} Re-run
@@ -99,11 +105,12 @@ export function TableDoctor({ tab }: { tab: EditorTab }) {
       {h && (
         <div className={cx("space-y-5 px-5 py-4 transition-opacity", res?.loading && "opacity-60")}>
           <Metrics h={h} mysql={cfg?.kind === "mysql"} />
-          <Findings tabId={tab.id} findings={h.findings} fixes={res?.fixes ?? {}} />
+          <Findings r={ref} findings={active} ignored={ignored} database={tab.database} />
           <div className="grid gap-5 xl:grid-cols-[minmax(0,2fr)_minmax(0,1fr)]">
             <Indexes indexes={h.indexes} usageSecs={h.stats.usageSecs} mysql={cfg?.kind === "mysql"} />
             <Space h={h} mysql={cfg?.kind === "mysql"} />
           </div>
+          <ColumnAnalysis r={ref} columns={h.columns} kind={cfg?.kind ?? "postgres"} />
           {h.notes.length > 0 && (
             <div className="space-y-1">
               {h.notes.map((n) => (
@@ -119,7 +126,7 @@ export function TableDoctor({ tab }: { tab: EditorTab }) {
   );
 }
 
-function ScoreRing({ score, loading }: { score?: number; loading: boolean }) {
+export function ScoreRing({ score, loading }: { score?: number; loading: boolean }) {
   const R = 26;
   const C = 2 * Math.PI * R;
   const color = score == null ? "var(--muted)" : scoreColor(score);
@@ -147,12 +154,13 @@ function ScoreRing({ score, loading }: { score?: number; loading: boolean }) {
   );
 }
 
-function Summary({ findings }: { findings: Finding[] }) {
+export function Summary({ findings, ignored = 0 }: { findings: Finding[]; ignored?: number }) {
   const count = (s: Severity) => findings.filter((f) => f.severity === s).length;
   if (findings.length === 0)
     return (
       <div className="mt-1.5 flex items-center gap-1.5 text-[12px] text-ok">
         <CircleCheck size={13} /> No problems found
+        {ignored > 0 && <span className="text-muted">· {ignored} ignored</span>}
       </div>
     );
   return (
@@ -236,41 +244,93 @@ function Metrics({ h, mysql }: { h: TableHealth; mysql: boolean }) {
   );
 }
 
-function Findings({ tabId, findings, fixes }: { tabId: string; findings: Finding[]; fixes: Record<string, string> }) {
+function Findings({ r, findings, ignored, database }: { r: DoctorRef; findings: Finding[]; ignored: Finding[]; database?: string }) {
   const [open, setOpen] = useState<Record<string, boolean>>({});
-  if (findings.length === 0)
-    return (
-      <section className="flex items-center gap-3 rounded-lg border border-ok/40 bg-ok/10 px-4 py-3 text-[13px] text-fg">
-        <CircleCheck size={18} className="text-ok" /> Nothing to fix — this table looks healthy.
-      </section>
-    );
+  const [showIgnored, setShowIgnored] = useState(false);
   return (
     <section>
-      <h2 className="mb-2 text-[13px] font-semibold">Findings</h2>
-      <div className="divide-y divide-line overflow-hidden rounded-lg border border-line bg-panel">
-        {findings.map((f) => (
-          <FindingRow key={f.id} tabId={tabId} f={f} open={!!open[f.id]} jobId={fixes[f.id]} toggle={() => setOpen((o) => ({ ...o, [f.id]: !o[f.id] }))} />
-        ))}
-      </div>
+      {findings.length === 0 ? (
+        <div className="flex items-center gap-3 rounded-lg border border-ok/40 bg-ok/10 px-4 py-3 text-[13px] text-fg">
+          <CircleCheck size={18} className="text-ok" /> Nothing to fix — this table looks healthy.
+        </div>
+      ) : (
+        <>
+          <h2 className="mb-2 text-[13px] font-semibold">Findings</h2>
+          <div className="divide-y divide-line overflow-hidden rounded-lg border border-line bg-panel">
+            {findings.map((f) => (
+              <FindingRow key={f.id} r={r} f={f} database={database} open={!!open[f.id]} toggle={() => setOpen((o) => ({ ...o, [f.id]: !o[f.id] }))} />
+            ))}
+          </div>
+        </>
+      )}
+      {ignored.length > 0 && (
+        <div className="mt-2">
+          <button onClick={() => setShowIgnored((v) => !v)} className="flex items-center gap-1.5 py-1 text-[12px] text-muted hover:text-fg">
+            <ChevronRight size={14} className={cx("transition-transform", showIgnored && "rotate-90")} />
+            Ignored ({ignored.length})
+          </button>
+          {showIgnored && <IgnoredList items={ignored.map((f) => ({ r, f }))} />}
+        </div>
+      )}
     </section>
   );
 }
 
-function FindingRow({ tabId, f, open, toggle, jobId }: { tabId: string; f: Finding; open: boolean; toggle: () => void; jobId?: string }) {
+/** Ignored findings, each with Restore. */
+export function IgnoredList({ items, showTable }: { items: { r: DoctorRef; f: Finding }[]; showTable?: boolean }) {
+  return (
+    <div className="divide-y divide-line overflow-hidden rounded-lg border border-line bg-panel">
+      {items.map(({ r, f }) => {
+        const Icon = SEV[f.severity].icon;
+        return (
+          <div key={`${refKey(r)}#${f.id}`} className="flex items-center gap-3 px-3.5 py-2 text-[12.5px] text-muted">
+            <Icon size={14} className="shrink-0 opacity-60" />
+            {showTable && <span className="shrink-0 font-mono text-[12px]">{r.schema}.{r.table}</span>}
+            <span className="min-w-0 flex-1 truncate">{f.title}</span>
+            <Button variant="ghost" className="h-7" onClick={() => setIgnored(r, f, false)}>
+              <Eye size={13} /> Restore
+            </Button>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+/** One finding: a title row, and when open the explanation, evidence, fix and Ignore. */
+export function FindingRow({ r, f, open, toggle, database, showTable }: { r: DoctorRef; f: Finding; open: boolean; toggle: () => void; database?: string; showTable?: boolean }) {
   const sev = SEV[f.severity];
   const Icon = sev.icon;
+  const jobId = useDoctor((s) => s.fixes[`${refKey(r)}#${f.id}`]);
   const [copied, setCopied] = useState(false);
-  const openInEditor = () => {
-    const tab = useStore.getState().tabs.find((t) => t.id === tabId);
-    if (tab && f.fix) useStore.getState().newTab({ sql: f.fix.sql, connId: tab.connId, title: `${tab.doctor?.table ?? "fix"}_fix.sql`, database: tab.database });
-  };
+  const openInEditor = () => f.fix && useStore.getState().newTab({ sql: f.fix.sql, connId: r.connId, title: `${r.table}_fix.sql`, database });
   return (
     <div>
-      <button onClick={toggle} className="flex w-full items-center gap-3 px-3.5 py-2.5 text-left hover:bg-hover">
+      <div
+        role="button"
+        tabIndex={0}
+        onClick={toggle}
+        onKeyDown={(e) => e.key === "Enter" && toggle()}
+        className="flex w-full cursor-pointer items-center gap-3 px-3.5 py-2.5 text-left hover:bg-hover"
+      >
         <ChevronRight size={15} className={cx("shrink-0 text-muted transition-transform", open && "rotate-90")} />
         <Icon size={16} className={cx("shrink-0", sev.text)} />
         <span className="min-w-0 flex-1">
-          <span className="block truncate text-[13px] font-medium text-fg">{f.title}</span>
+          <span className="flex items-baseline gap-2">
+            {showTable && (
+              <button
+                title="Open Table Doctor for this table"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  openDoctor(r.connId, r.schema, r.table, database);
+                }}
+                className="shrink-0 rounded bg-hover px-1.5 font-mono text-[12px] text-fg-2 hover:text-accent"
+              >
+                {r.schema}.{r.table}
+              </button>
+            )}
+            <span className="truncate text-[13px] font-medium text-fg">{f.title}</span>
+          </span>
           {!open && <span className="block truncate text-[12px] text-muted">{f.detail}</span>}
         </span>
         {jobId ? (
@@ -285,7 +345,7 @@ function FindingRow({ tabId, f, open, toggle, jobId }: { tabId: string; f: Findi
           )
         )}
         <span className={cx("shrink-0 rounded px-1.5 py-0.5 text-[10.5px] font-semibold tracking-wide uppercase", sev.bg, sev.text)}>{sev.label}</span>
-      </button>
+      </div>
       {open && (
         <div className="space-y-3 border-t border-line bg-panel-2 px-4 py-3 pl-[46px]">
           <p className="selectable text-[13px] leading-relaxed text-fg-2">{f.detail}</p>
@@ -302,7 +362,7 @@ function FindingRow({ tabId, f, open, toggle, jobId }: { tabId: string; f: Findi
             </dl>
           )}
           {f.fix && (
-            <div className="space-y-2">
+            <>
               <pre className="selectable overflow-x-auto rounded-md border border-line-strong bg-bg/50 p-3 font-mono text-[12.5px] whitespace-pre-wrap text-fg">{f.fix.sql}</pre>
               {f.fix.note && (
                 <p className="flex items-start gap-2 text-[12px] text-fg-2">
@@ -310,16 +370,21 @@ function FindingRow({ tabId, f, open, toggle, jobId }: { tabId: string; f: Findi
                   {f.fix.note}
                 </p>
               )}
-              <div className="flex items-center gap-2">
-                {jobId ? (
-                  <Button onClick={() => useImports.getState().show(jobId)}>
-                    <Spinner size={12} /> Running in background — view
-                  </Button>
-                ) : (
-                  <Button variant="primary" onClick={() => confirmFix(tabId, f)}>
-                    <Wrench size={14} /> {f.fix.label}…
-                  </Button>
-                )}
+            </>
+          )}
+          <div className="flex flex-wrap items-center gap-2">
+            {f.fix &&
+              (jobId ? (
+                <Button onClick={() => useImports.getState().show(jobId)}>
+                  <Spinner size={12} /> Running in background — view
+                </Button>
+              ) : (
+                <Button variant="primary" onClick={() => confirmFix(r, f)}>
+                  <Wrench size={14} /> {f.fix.label}…
+                </Button>
+              ))}
+            {f.fix && (
+              <>
                 <Button variant="ghost" onClick={openInEditor}>
                   <FileCode size={14} /> Open in editor
                 </Button>
@@ -333,9 +398,12 @@ function FindingRow({ tabId, f, open, toggle, jobId }: { tabId: string; f: Findi
                 >
                   <ClipboardCopy size={14} /> {copied ? "Copied" : "Copy SQL"}
                 </Button>
-              </div>
-            </div>
-          )}
+              </>
+            )}
+            <Button variant="ghost" className="ml-auto" title="Leave it out of the list, the score and the tree dots" onClick={() => setIgnored(r, f, true)}>
+              <EyeOff size={14} /> Ignore
+            </Button>
+          </div>
         </div>
       )}
     </div>

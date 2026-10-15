@@ -38,6 +38,8 @@ import { categoryMenu, connectionMenu, databaseMenu, editorDb, editorName, routi
 import { baseId, dbOf, isMultiDb, subId } from "../lib/connIds";
 import { Button, cx, DbIcon, EnvBadge, IconButton, SchemaIcon, SearchInput, Spinner } from "./ui";
 import { connColor, tint } from "../lib/connStyle";
+import { ensureBadges, openDoctor, refKey, useDoctor } from "../lib/doctor";
+import type { Finding } from "../lib/api";
 
 export function LeftPanel({ width }: { width: number }) {
   return (
@@ -689,6 +691,16 @@ function CategoryNode({
   const tip = useHoverTip();
   const st = useStore.getState;
 
+  // Table Doctor dots: one schema scan once the table list is shown, again after a schema refresh
+  const isTables = kind === "table";
+  const badgesOn = useStore((s) => s.settings.doctorBadges !== false);
+  const tree = useStore((s) => s.conn[cfg.id]?.schema);
+  useEffect(() => {
+    if (open && isTables && badgesOn) ensureBadges(cfg.id, schema);
+  }, [open, isTables, badgesOn, tree, cfg.id, schema]);
+  const health = useDoctor((s) => (isTables && badgesOn ? s.schemas[`${cfg.id}|${schema}`]?.tables : undefined));
+  const ignoredMap = useStore((s) => s.doctorIgnored);
+
   const openTable = (name: string, structure = false) =>
     st().newTab({
       sql: `SELECT *\nFROM ${editorName(cfg.kind, schema, name)}\nLIMIT 100;`,
@@ -729,6 +741,13 @@ function CategoryNode({
               <span className="flex-1 truncate">
                 <Highlight text={name} query={filter} />
               </span>
+              {health?.[name] && (
+                <HealthDot
+                  findings={health[name].findings}
+                  ignored={ignoredMap[refKey({ connId: cfg.id, schema, table: name })]}
+                  onOpen={() => openDoctor(cfg.id, schema, name, editorDb(cfg.kind, schema))}
+                />
+              )}
               {isRelation && (
                 <button
                   title="Open structure"
@@ -1019,6 +1038,28 @@ function TreeRow({
 const totalBytes = (s?: TableStat) => (s ? s.dataBytes + s.indexBytes : 0);
 
 /** Delayed hover tooltip. */
+/** Red (critical) or amber (warning) dot for a table with Table Doctor findings; opens Table Doctor. */
+function HealthDot({ findings, ignored, onOpen }: { findings: Finding[]; ignored?: string[]; onOpen: () => void }) {
+  const active = ignored ? findings.filter((f) => !ignored.includes(f.id)) : findings;
+  const critical = active.filter((f) => f.severity === "critical").length;
+  const warning = active.filter((f) => f.severity === "warning").length;
+  if (!critical && !warning) return null;
+  const parts = [critical && `${critical} critical`, warning && `${warning} warning${warning > 1 ? "s" : ""}`].filter(Boolean).join(", ");
+  return (
+    <button
+      title={`Table Doctor: ${parts} — click to open`}
+      onClick={(e) => {
+        e.stopPropagation();
+        onOpen();
+      }}
+      onDoubleClick={(e) => e.stopPropagation()}
+      className="shrink-0 rounded-full p-1 hover:bg-hover"
+    >
+      <span className={cx("block h-2 w-2 rounded-full", critical ? "bg-err" : "bg-warn")} />
+    </button>
+  );
+}
+
 function useHoverTip() {
   const [state, setState] = useState<{ name: string; el: HTMLElement } | null>(null);
   const timer = useRef<number | undefined>(undefined);

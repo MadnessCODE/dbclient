@@ -43,6 +43,7 @@ import { setActiveEditor } from "../lib/editorBridge";
 import { FavoritesPicker, openAddFavorite } from "./FavoritesView";
 import { baseId, dbOf, isMultiDb, subId } from "../lib/connIds";
 import { TableDoctor } from "./TableDoctor";
+import { DatabaseDoctor } from "./DatabaseDoctor";
 
 type MonacoEditor = MonacoApi.editor.IStandaloneCodeEditor;
 
@@ -67,7 +68,7 @@ export function EditorArea() {
       {tab ? (
         <div
           style={color ? { borderColor: tint(color, 0.7) } : undefined}
-          className={cx("mx-3 flex min-h-0 flex-1 flex-col overflow-hidden rounded-lg border border-line-strong bg-panel-2", tab.doctor && "mb-3")}
+          className={cx("mx-3 flex min-h-0 flex-1 flex-col overflow-hidden rounded-lg border border-line-strong bg-panel-2", (tab.doctor || tab.dbDoctor) && "mb-3")}
         >
           {isProduction(cfg) && (
             <div
@@ -81,6 +82,8 @@ export function EditorArea() {
           )}
           {tab.doctor ? (
             <TableDoctor key={tab.id} tab={tab} />
+          ) : tab.dbDoctor ? (
+            <DatabaseDoctor key={tab.id} tab={tab} />
           ) : (
             <>
               <Toolbar tab={tab} editorRef={editorRef} />
@@ -143,7 +146,7 @@ function tabMenu(tab: EditorTab, tabs: EditorTab[]): MenuEntry[] {
     ...(connName && sameConn.length > 1
       ? [{ label: `Close all "${connName}" tabs`, icon: <Unplug />, onClick: () => void closeTabs(sameConn) } as MenuEntry]
       : []),
-    ...(tab.doctor ? [] : sqlTabItems(tab)),
+    ...(tab.doctor || tab.dbDoctor ? [] : sqlTabItems(tab)),
   ];
 }
 
@@ -199,7 +202,7 @@ function TabsBar({ tabs }: { tabs: EditorTab[] }) {
           >
             {runtime[t.id]?.running ? (
               <Spinner size={15} />
-            ) : t.doctor ? (
+            ) : t.doctor || t.dbDoctor ? (
               <Stethoscope size={16} className="shrink-0 text-accent" />
             ) : kind ? (
               <DbIcon kind={kind} size={16} />

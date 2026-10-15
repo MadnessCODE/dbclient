@@ -28,7 +28,10 @@ export default function App() {
   const maximized = useStore((s) => s.resultsMaximized);
   const view = useStore((s) => s.view);
   // a Table Doctor tab uses the whole area, without the results panel
-  const doctor = useStore((s) => !!s.tabs.find((t) => t.id === s.activeTabId)?.doctor);
+  const doctor = useStore((s) => {
+    const t = s.tabs.find((t) => t.id === s.activeTabId);
+    return !!(t?.doctor || t?.dbDoctor);
+  });
 
   const left = useResizable("left", 270, 200, 480, "x");
   const results = useResizable("results", 470, 160, 900, "y", true);

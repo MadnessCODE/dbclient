@@ -239,6 +239,8 @@ export const api = {
   getTableStructure: (id: string, schema: string, table: string) =>
     invoke<TableStructure>("get_table_structure", { id, schema, table }),
   analyzeTable: (id: string, schema: string, table: string) => invoke<TableHealth>("analyze_table", { id, schema, table }),
+  analyzeSchema: (id: string, schema: string) => invoke<SchemaHealth>("analyze_schema", { id, schema }),
+  columnStats: (id: string, schema: string, table: string, column: string) => invoke<ColumnStats>("column_stats", { id, schema, table, column }),
   listCollations: (id: string) => invoke<string[]>("list_collations", { id }),
   /** `database`: MySQL default database for unqualified names ("" = none) */
   runQuery: (connId: string, queryId: string, sql: string, maxRows: number, database?: string) =>
@@ -369,6 +371,36 @@ export interface TableHealth {
   indexes: IndexUsage[];
   findings: Finding[];
   notes: string[];
+  columns: { name: string; dataType: string }[];
+}
+
+/** One table of a schema-wide scan. */
+export interface TableReport {
+  table: string;
+  rows: number | null;
+  /** Table, indexes and TOAST */
+  bytes: number;
+  findings: Finding[];
+}
+
+export interface SchemaHealth {
+  tables: TableReport[];
+  notes: string[];
+}
+
+export interface ColumnStats {
+  /** "pg_stats" or "sample" */
+  source: string;
+  /** No statistics yet (PostgreSQL: the table needs ANALYZE) */
+  missing: boolean;
+  rows: number | null;
+  nullPct: number | null;
+  distinct: number | null;
+  /** Most common values, pct of all rows */
+  common: { value: string | null; pct: number }[];
+  histogram: string[];
+  /** Indexes whose first column this is */
+  indexes: string[];
 }
 
 export interface TableStats {

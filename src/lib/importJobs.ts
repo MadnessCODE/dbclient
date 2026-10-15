@@ -8,7 +8,7 @@ import { useStore } from "../store";
 
 export interface ImportJob {
   id: string;
-  kind: "dump" | "table" | "export" | "sql";
+  kind: "dump" | "table" | "export" | "sql" | "scan";
   title: string;
   /** "connection / db.table" */
   target: string;
@@ -23,7 +23,7 @@ export interface ImportJob {
   seen: boolean;
   /** Stop was clicked; running statements are finishing */
   stopping?: boolean;
-  /** kind "sql": statements run one by one, and how many have finished */
+  /** kind "sql": statements run one by one, "scan": items analyzed one by one; and how many have finished */
   statements?: string[];
   done?: number;
 }
@@ -62,7 +62,9 @@ export const useImports = create<State>()((set) => ({
   stop: (id) => {
     set((s) => ({ jobs: s.jobs.map((j) => (j.id === id ? { ...j, stopping: true } : j)) }));
     const job = useImports.getState().jobs.find((j) => j.id === id);
-    void (job?.kind === "sql" ? api.cancelQuery(id) : api.cancelImport(id));
+    // a scan stops between its steps
+    if (job?.kind === "sql") void api.cancelQuery(id);
+    else if (job?.kind !== "scan") void api.cancelImport(id);
   },
   clearFinished: () => set((s) => ({ jobs: s.jobs.filter((j) => !isDone(j)) })),
   closeToast: (id) => set((s) => ({ toasts: s.toasts.filter((t) => t.id !== id) })),
@@ -74,7 +76,7 @@ export const isRunning = (j: ImportJob) => !isDone(j);
 /** 0..100 */
 export function jobPercent(j: ImportJob) {
   if (j.summary && !j.summary.failed && !j.summary.cancelled) return 100;
-  if (j.kind === "sql") return j.statements?.length ? ((j.done ?? 0) / j.statements.length) * 100 : 0;
+  if (j.kind === "sql" || j.kind === "scan") return j.statements?.length ? ((j.done ?? 0) / j.statements.length) * 100 : 0;
   const p = j.progress;
   const total = p?.totalBytes || j.fileSize;
   return total > 0 ? Math.min(100, ((p?.doneBytes ?? 0) / total) * 100) : 0;
@@ -152,6 +154,35 @@ export async function startSqlJob(meta: { title: string; target: string; connId:
   return !error && !summary.cancelled;
 }
 
+/** Runs `step` for each item as a background task (kind "scan"): progress in Tasks, a toast at the end. */
+export async function startScanJob(meta: { title: string; target: string; connId: string }, items: string[], step: (item: string) => Promise<void>, onStart?: (jobId: string) => void) {
+  const id = crypto.randomUUID();
+  const job: ImportJob = { ...meta, id, kind: "scan", workers: 1, fileSize: 0, startedAt: Date.now(), seen: false, statements: items, done: 0 };
+  useImports.setState((s) => ({ jobs: [...s.jobs, job] }));
+  onStart?.(id);
+  const summary: ImportSummary = { statements: 0, rows: 0, bytes: 0, elapsedMs: 0, cancelled: false, failed: false, errorCount: 0, errors: [], notes: [] };
+  let error: string | undefined;
+  for (const [i, item] of items.entries()) {
+    if (useImports.getState().jobs.find((j) => j.id === id)?.stopping) {
+      summary.cancelled = true;
+      break;
+    }
+    try {
+      await step(item);
+    } catch (e) {
+      error = `${item}: ${errorText(e)}`;
+      break;
+    }
+    summary.statements = i + 1;
+    patch(id, { done: i + 1 });
+  }
+  summary.elapsedMs = Date.now() - job.startedAt;
+  summary.failed = !!error;
+  patch(id, { summary, error });
+  announce(id);
+  return { error, cancelled: summary.cancelled };
+}
+
 /** Toast for work that isn't an import job; success hides itself, errors stay. */
 export function pushToast(tone: Toast["tone"], title: string, body: string) {
   const toast: Toast = { id: crypto.randomUUID(), tone, title, body };
@@ -180,6 +211,12 @@ function announce(id: string) {
 export function outcome(j: ImportJob): { tone: Toast["tone"]; title: string; body: string } {
   const s = j.summary;
   const secs = s ? `${(s.elapsedMs / 1000).toFixed(1)} s` : "";
+  if (j.kind === "scan") {
+    if (j.error) return { tone: "error", title: `Failed: ${j.title}`, body: j.error };
+    if (!s) return { tone: "warn", title: j.title, body: "" };
+    if (s.cancelled) return { tone: "warn", title: `Stopped: ${j.title}`, body: `${s.statements} of ${j.statements?.length ?? 0} analyzed.` };
+    return { tone: "ok", title: `Finished: ${j.title}`, body: `${j.target} · ${secs}` };
+  }
   if (j.kind === "sql") {
     if (j.error) return { tone: "error", title: `Failed: ${j.title}`, body: j.error };
     if (!s) return { tone: "warn", title: j.title, body: "" };

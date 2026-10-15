@@ -17,11 +17,11 @@ export function ImportJobDialog() {
   if (!job) return null;
   const running = isRunning(job);
   const hide = () => show(null);
-  const sql = job.kind === "sql";
-  const noun = job.kind === "export" ? "export" : sql ? "task" : "import";
+  const sql = job.kind === "sql" || job.kind === "scan";
+  const noun = job.kind === "export" ? "export" : job.kind === "scan" ? "analysis" : sql ? "task" : "import";
 
   return (
-    <Modal title={job.kind === "export" ? "Export" : sql ? "Maintenance" : "Import"} onClose={hide} width={job.kind === "table" ? 880 : 760}>
+    <Modal title={job.kind === "export" ? "Export" : job.kind === "scan" ? "Analysis" : sql ? "Maintenance" : "Import"} onClose={hide} width={job.kind === "table" ? 880 : 760}>
       <div className="flex items-center gap-2 border-b border-line px-5 py-2.5 text-[12.5px] text-fg-2">
         {job.kind === "export" ? <FileDown size={14} className="shrink-0 text-accent" /> : sql ? <Wrench size={14} className="shrink-0 text-accent" /> : <FileUp size={14} className="shrink-0 text-accent" />}
         <span className="truncate font-medium text-fg">{job.title}</span>
@@ -188,11 +188,11 @@ function TaskRow({ job: j, onOpen, onDismiss }: { job: ImportJob; onOpen: () => 
   const tone = done ? outcome(j).tone : null;
   const pct = jobPercent(j);
   const rows = j.summary?.rows ?? j.progress?.rows ?? 0;
-  const status = j.kind === "sql"
+  const status = j.kind === "sql" || j.kind === "scan"
     ? !done
       ? j.stopping
         ? "Stopping…"
-        : `Statement ${Math.min((j.done ?? 0) + 1, j.statements?.length ?? 1)} of ${j.statements?.length ?? 1}`
+        : `${j.kind === "scan" ? "Schema" : "Statement"} ${Math.min((j.done ?? 0) + 1, j.statements?.length ?? 1)} of ${j.statements?.length ?? 1}`
       : j.error
         ? "Failed"
         : j.summary?.cancelled
@@ -234,7 +234,7 @@ function TaskRow({ job: j, onOpen, onDismiss }: { job: ImportJob; onOpen: () => 
       </button>
       {!done ? (
         <button
-          title={j.stopping ? "Stopping…" : j.kind === "export" ? "Stop export" : j.kind === "sql" ? "Stop task" : "Stop import"}
+          title={j.stopping ? "Stopping…" : j.kind === "export" ? "Stop export" : j.kind === "sql" || j.kind === "scan" ? "Stop task" : "Stop import"}
           disabled={j.stopping}
           onClick={() => useImports.getState().stop(j.id)}
           className="rounded p-1 text-muted hover:bg-err/15 hover:text-err disabled:hover:bg-transparent"
