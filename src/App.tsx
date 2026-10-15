@@ -27,6 +27,11 @@ export default function App() {
   const theme = useStore((s) => s.theme);
   const maximized = useStore((s) => s.resultsMaximized);
   const view = useStore((s) => s.view);
+  // a Table Doctor tab uses the whole area, without the results panel
+  const doctor = useStore((s) => {
+    const t = s.tabs.find((t) => t.id === s.activeTabId);
+    return !!(t?.doctor || t?.dbDoctor);
+  });
 
   const left = useResizable("left", 270, 200, 480, "x");
   const results = useResizable("results", 470, 160, 900, "y", true);
@@ -81,9 +86,9 @@ export default function App() {
             <LeftPanel width={left.size} />
             <Splitter direction="x" onMouseDown={left.onMouseDown} />
             <main className="flex min-w-0 flex-1 flex-col bg-bg">
-              {!maximized && <EditorArea />}
-              {!maximized && <Splitter direction="y" onMouseDown={results.onMouseDown} />}
-              <ResultsPanel height={results.size} />
+              {(!maximized || doctor) && <EditorArea />}
+              {!maximized && !doctor && <Splitter direction="y" onMouseDown={results.onMouseDown} />}
+              {!doctor && <ResultsPanel height={results.size} />}
             </main>
           </>
         )}

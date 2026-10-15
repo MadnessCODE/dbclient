@@ -244,6 +244,9 @@ export const api = {
   getSchema: (id: string) => invoke<SchemaTree>("get_schema", { id }),
   getTableStructure: (id: string, schema: string, table: string) =>
     invoke<TableStructure>("get_table_structure", { id, schema, table }),
+  analyzeTable: (id: string, schema: string, table: string) => invoke<TableHealth>("analyze_table", { id, schema, table }),
+  analyzeSchema: (id: string, schema: string) => invoke<SchemaHealth>("analyze_schema", { id, schema }),
+  columnStats: (id: string, schema: string, table: string, column: string) => invoke<ColumnStats>("column_stats", { id, schema, table, column }),
   listCollations: (id: string) => invoke<string[]>("list_collations", { id }),
   /** `database`: MySQL default database for unqualified names ("" = none) */
   runQuery: (connId: string, queryId: string, sql: string, maxRows: number, database?: string) =>
@@ -369,6 +372,89 @@ export interface DumpInfo {
   detected: string | null;
   /** pg_dump custom format archive, e.g. "pg_dump 16.4 · gzip · 12 tables" */
   archive: string | null;
+}
+
+/** Table Doctor result (see doctor.rs). */
+export interface TableHealth {
+  score: number;
+  stats: TableStats;
+  indexes: IndexUsage[];
+  findings: Finding[];
+  notes: string[];
+  columns: { name: string; dataType: string }[];
+}
+
+/** One table of a schema-wide scan. */
+export interface TableReport {
+  table: string;
+  rows: number | null;
+  /** Table, indexes and TOAST */
+  bytes: number;
+  findings: Finding[];
+}
+
+export interface SchemaHealth {
+  tables: TableReport[];
+  notes: string[];
+}
+
+export interface ColumnStats {
+  /** "pg_stats" or "sample" */
+  source: string;
+  /** No statistics yet (PostgreSQL: the table needs ANALYZE) */
+  missing: boolean;
+  rows: number | null;
+  nullPct: number | null;
+  distinct: number | null;
+  /** Most common values, pct of all rows */
+  common: { value: string | null; pct: number }[];
+  histogram: string[];
+  /** Indexes whose first column this is */
+  indexes: string[];
+}
+
+export interface TableStats {
+  rows: number | null;
+  tableBytes: number | null;
+  indexBytes: number | null;
+  toastBytes: number | null;
+  liveBytes: number | null;
+  deadBytes: number | null;
+  freeBytes: number | null;
+  liveRows: number | null;
+  deadRows: number | null;
+  deadPct: number | null;
+  /** PostgreSQL: sequential / index scans; MySQL: rows read by full scans / through indexes */
+  seqScans: number | null;
+  indexScans: number | null;
+  seqScanPct: number | null;
+  analyzedSecsAgo: number | null;
+  vacuumedSecsAgo: number | null;
+  modifiedSinceAnalyze: number | null;
+  engine: string | null;
+  usageSecs: number | null;
+}
+
+export interface IndexUsage {
+  name: string;
+  columns: string[];
+  bytes: number | null;
+  scans: number | null;
+  primary: boolean;
+  unique: boolean;
+  valid: boolean;
+  definition: string;
+}
+
+export type Severity = "critical" | "warning" | "info";
+
+export interface Finding {
+  id: string;
+  severity: Severity;
+  title: string;
+  detail: string;
+  evidence: { label: string; value: string }[];
+  fix: { label: string; sql: string; note: string | null; long: boolean } | null;
 }
 
 export interface ImportSummary {

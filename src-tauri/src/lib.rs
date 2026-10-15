@@ -1,4 +1,5 @@
 mod db;
+mod doctor;
 mod dump;
 mod er;
 mod export;
@@ -285,6 +286,23 @@ async fn er_model(pools: State<'_, Pools>, id: String, schema: String) -> AppRes
     er::load(&pools.get(&id)?, &schema).await
 }
 
+/// Table Doctor: statistics, index usage and findings for one table (read-only).
+#[tauri::command]
+async fn analyze_table(pools: State<'_, Pools>, id: String, schema: String, table: String) -> AppResult<doctor::TableHealth> {
+    doctor::analyze(&pools.get(&id)?, &schema, &table).await
+}
+
+/// Database Doctor and tree badges: findings for every table of a schema.
+#[tauri::command]
+async fn analyze_schema(pools: State<'_, Pools>, id: String, schema: String) -> AppResult<doctor::SchemaHealth> {
+    doctor::analyze_schema(&pools.get(&id)?, &schema).await
+}
+
+#[tauri::command]
+async fn column_stats(pools: State<'_, Pools>, id: String, schema: String, table: String, column: String) -> AppResult<doctor::ColumnStats> {
+    doctor::column_stats(&pools.get(&id)?, &schema, &table, &column).await
+}
+
 #[tauri::command]
 async fn get_table_structure(pools: State<'_, Pools>, id: String, schema: String, table: String) -> AppResult<TableStructure> {
     structure::load(&pools.get(&id)?, &schema, &table).await
@@ -481,6 +499,9 @@ pub fn run() {
             forget_known_host,
             get_schema,
             get_table_structure,
+            analyze_table,
+            analyze_schema,
+            column_stats,
             er_model,
             list_collations,
             run_query,

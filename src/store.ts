@@ -43,6 +43,10 @@ export interface EditorTab {
   table?: TableRef;
   /** MySQL: default database for unqualified names, picked next to the connection */
   database?: string;
+  /** Table Doctor tab for this table instead of an SQL editor */
+  doctor?: TableRef;
+  /** Database Doctor tab: findings across these schemas */
+  dbDoctor?: { schemas: string[]; label: string };
 }
 
 /** What the backend gets as the tab's MySQL default database ("" = none); undefined for Postgres. */
@@ -163,6 +167,8 @@ export interface Settings {
   fontSize: number;
   /** Clicking a schema opens it in the focus view instead of expanding it */
   focusOnClick?: boolean;
+  /** false: no Table Doctor dots in the tree (no background scans) */
+  doctorBadges?: boolean;
 }
 
 /** One schema shown alone in the left panel; `open` false keeps it to return to from the tree. */
@@ -210,6 +216,8 @@ export interface ActionDialog {
   /** e.g. close our own connections to a database before dropping it */
   beforeRun?: () => Promise<void>;
   afterRun?: () => void;
+  /** Runs the confirmed SQL elsewhere (e.g. a background job) instead of in the dialog */
+  onRun?: (sql: string) => void;
 }
 
 interface PasswordPrompt {
@@ -252,6 +260,8 @@ interface State {
   favorites: FavoriteQuery[];
   favoriteCategories: FavoriteCategory[];
   favoriteDialog: FavoriteDialog | null;
+  /** Table Doctor findings the user chose to ignore: "<connId>|<schema>|<table>" -> finding ids */
+  doctorIgnored: Record<string, string[]>;
   theme: "dark" | "light";
   settings: Settings;
 
@@ -310,6 +320,8 @@ interface State {
     table?: TableRef;
     resultTab?: ResultTab;
     database?: string;
+    doctor?: TableRef;
+    dbDoctor?: EditorTab["dbDoctor"];
   }) => string;
   closeTab: (id: string) => void;
   setActiveTab: (id: string) => void;
@@ -327,6 +339,8 @@ interface State {
   renameFavoriteCategory: (id: string, name: string) => void;
   /** Its favorites move to Uncategorized */
   removeFavoriteCategory: (id: string) => void;
+
+  setIgnored: (key: string, findingId: string, ignored: boolean) => void;
 
   // misc
   clearHistory: (tabId?: string) => void;
@@ -381,6 +395,7 @@ export const useStore = create<State>()(
         favorites: [],
         favoriteCategories: [],
         favoriteDialog: null,
+        doctorIgnored: {},
         theme: "dark",
         settings: { maxRows: 10000, pageSize: 50, fontSize: 14 },
         leftPanel: "connections",
@@ -552,6 +567,8 @@ export const useStore = create<State>()(
             filePath: opts.filePath,
             table: opts.table,
             database: opts.database,
+            doctor: opts.doctor,
+            dbDoctor: opts.dbDoctor,
           };
           set((s) => ({
             view: "workspace",
@@ -734,6 +751,15 @@ export const useStore = create<State>()(
             favorites: s.favorites.map((f) => (f.categoryId === id ? { ...f, categoryId: null } : f)),
           })),
 
+        setIgnored: (key, findingId, ignored) =>
+          set((s) => {
+            const ids = (s.doctorIgnored[key] ?? []).filter((id) => id !== findingId);
+            if (ignored) ids.push(findingId);
+            const doctorIgnored = { ...s.doctorIgnored, [key]: ids };
+            if (ids.length === 0) delete doctorIgnored[key];
+            return { doctorIgnored };
+          }),
+
         clearHistory: (tabId) => set((s) => ({ history: tabId ? s.history.filter((h) => h.tabId !== tabId) : [] })),
         toggleTheme: () => set((s) => ({ theme: s.theme === "dark" ? "light" : "dark" })),
         setSettings: (patch) => set((s) => ({ settings: { ...s.settings, ...patch } })),
@@ -756,6 +782,7 @@ export const useStore = create<State>()(
         history: s.history,
         favorites: s.favorites,
         favoriteCategories: s.favoriteCategories,
+        doctorIgnored: s.doctorIgnored,
         theme: s.theme,
         settings: s.settings,
         selectedConnId: s.selectedConnId,

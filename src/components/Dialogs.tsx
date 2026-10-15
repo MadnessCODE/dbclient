@@ -204,6 +204,12 @@ export function SettingsDialog() {
             <option value="focus">Opens it in focus</option>
           </select>
         </Row>
+        <Row label="Table health dots" hint="Red / amber dots next to tables with Table Doctor findings. Reads catalog statistics in the background.">
+          <select className={field} value={settings.doctorBadges === false ? "off" : "on"} onChange={(e) => setSettings({ doctorBadges: e.target.value === "on" })}>
+            <option value="on">Show in the schema tree</option>
+            <option value="off">Off</option>
+          </select>
+        </Row>
         <Row label="Editor font size">
           <select className={field} value={settings.fontSize} onChange={(e) => setSettings({ fontSize: Number(e.target.value) })}>
             {[12, 13, 14, 15, 16, 18].map((n) => (

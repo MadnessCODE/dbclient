@@ -26,6 +26,7 @@ import {
   SaveAll,
   Square,
   Star,
+  Stethoscope,
   TriangleAlert,
   WandSparkles,
   X,
@@ -41,6 +42,8 @@ import { connColor, isProduction, tint } from "../lib/connStyle";
 import { setActiveEditor } from "../lib/editorBridge";
 import { FavoritesPicker, openAddFavorite } from "./FavoritesView";
 import { baseId, dbOf, isMultiDb, subId } from "../lib/connIds";
+import { TableDoctor } from "./TableDoctor";
+import { DatabaseDoctor } from "./DatabaseDoctor";
 
 type MonacoEditor = MonacoApi.editor.IStandaloneCodeEditor;
 
@@ -65,7 +68,7 @@ export function EditorArea() {
       {tab ? (
         <div
           style={color ? { borderColor: tint(color, 0.7) } : undefined}
-          className="mx-3 flex min-h-0 flex-1 flex-col overflow-hidden rounded-lg border border-line-strong bg-panel-2"
+          className={cx("mx-3 flex min-h-0 flex-1 flex-col overflow-hidden rounded-lg border border-line-strong bg-panel-2", (tab.doctor || tab.dbDoctor) && "mb-3")}
         >
           {isProduction(cfg) && (
             <div
@@ -77,8 +80,16 @@ export function EditorArea() {
               <span className="font-normal opacity-80">— statements that change data ask for confirmation</span>
             </div>
           )}
-          <Toolbar tab={tab} editorRef={editorRef} />
-          <SqlEditor tab={tab} editorRef={editorRef} />
+          {tab.doctor ? (
+            <TableDoctor key={tab.id} tab={tab} />
+          ) : tab.dbDoctor ? (
+            <DatabaseDoctor key={tab.id} tab={tab} />
+          ) : (
+            <>
+              <Toolbar tab={tab} editorRef={editorRef} />
+              <SqlEditor tab={tab} editorRef={editorRef} />
+            </>
+          )}
         </div>
       ) : (
         <NoTabs />
@@ -135,6 +146,14 @@ function tabMenu(tab: EditorTab, tabs: EditorTab[]): MenuEntry[] {
     ...(connName && sameConn.length > 1
       ? [{ label: `Close all "${connName}" tabs`, icon: <Unplug />, onClick: () => void closeTabs(sameConn) } as MenuEntry]
       : []),
+    ...(tab.doctor || tab.dbDoctor ? [] : sqlTabItems(tab)),
+  ];
+}
+
+/** Tab menu items that only make sense for an SQL editor tab. */
+function sqlTabItems(tab: EditorTab): MenuEntry[] {
+  const st = useStore.getState();
+  return [
     "sep",
     ...saveItems(tab),
     { label: "Duplicate tab", icon: <Copy />, onClick: () => st.newTab({ sql: tab.sql, connId: tab.connId, database: tab.database, title: `${tab.title} (copy)`, table: tab.table }) },
@@ -181,7 +200,15 @@ function TabsBar({ tabs }: { tabs: EditorTab[] }) {
               active ? "border-line-strong bg-panel-2 text-fg" : "border-transparent text-fg-2 hover:bg-hover",
             )}
           >
-            {runtime[t.id]?.running ? <Spinner size={15} /> : kind ? <DbIcon kind={kind} size={16} /> : <FileCode size={16} className="text-muted" />}
+            {runtime[t.id]?.running ? (
+              <Spinner size={15} />
+            ) : t.doctor || t.dbDoctor ? (
+              <Stethoscope size={16} className="shrink-0 text-accent" />
+            ) : kind ? (
+              <DbIcon kind={kind} size={16} />
+            ) : (
+              <FileCode size={16} className="text-muted" />
+            )}
             <span className="flex-1 truncate text-[13px]">{t.title}</span>
             {t.dirty && <span className="h-1.5 w-1.5 rounded-full bg-ok" title="Unsaved changes" />}
             {runtime[t.id]?.unseen && (

@@ -145,6 +145,11 @@ function ActionDialogView() {
     setError(null);
     try {
       await dlg.beforeRun?.();
+      if (dlg.onRun) {
+        close();
+        dlg.onRun(sql);
+        return;
+      }
       await api.runQuery(dlg.connId, crypto.randomUUID(), sql, 10);
       close();
       dlg.afterRun?.();
