@@ -1,5 +1,5 @@
-// Favorites tab (saved queries grouped by category) and the add/edit favorite dialog.
-import { useMemo, useState } from "react";
+// Favorites picker of the query editor (saved queries grouped by category) and the add/edit favorite dialog.
+import { useEffect, useMemo, useRef, useState } from "react";
 import { ask } from "@tauri-apps/plugin-dialog";
 import {
   ChevronDown,
@@ -56,13 +56,18 @@ async function deleteFavorite(f: FavoriteQuery) {
   if (ok) st().removeFavorite(f.id);
 }
 
-function favoriteMenu(tab: EditorTab, f: FavoriteQuery): MenuEntry[] {
+/** `done` closes the picker after actions that leave it. */
+function favoriteMenu(tab: EditorTab, f: FavoriteQuery, done: () => void): MenuEntry[] {
   const cats = st().favoriteCategories;
+  const then = (fn: () => void) => () => {
+    fn();
+    done();
+  };
   return [
-    { label: "Insert at cursor", icon: <TextCursorInput />, onClick: () => insertFavorite(tab, f) },
-    { label: "Replace editor content", icon: <Replace />, onClick: () => replaceEditor(tab, f) },
-    { label: "Open in new tab", icon: <SquarePlus />, onClick: () => openInNewTab(tab, f) },
-    { label: "Run", icon: <Play />, onClick: () => void st().runTab(tab.id, f.sql) },
+    { label: "Insert at cursor", icon: <TextCursorInput />, shortcut: "Enter", onClick: then(() => insertFavorite(tab, f)) },
+    { label: "Replace editor content", icon: <Replace />, onClick: then(() => replaceEditor(tab, f)) },
+    { label: "Open in new tab", icon: <SquarePlus />, shortcut: "Shift+Enter", onClick: then(() => openInNewTab(tab, f)) },
+    { label: "Run", icon: <Play />, onClick: then(() => void st().runTab(tab.id, f.sql)) },
     { label: "Copy SQL", icon: <ClipboardCopy />, onClick: () => void navigator.clipboard.writeText(f.sql) },
     "sep",
     { label: "Edit…", icon: <Pencil />, onClick: () => st().setUi({ favoriteDialog: { favorite: f } }) },
@@ -79,13 +84,19 @@ function favoriteMenu(tab: EditorTab, f: FavoriteQuery): MenuEntry[] {
   ];
 }
 
-export function FavoritesView({ tab }: { tab: EditorTab }) {
+/** Favorites dropdown of the query editor: search, categories, insert / open / run. */
+export function FavoritesPicker({ tab, onAdd, onClose }: { tab: EditorTab; onAdd: () => void; onClose: () => void }) {
   const favorites = useStore((s) => s.favorites);
   const categories = useStore((s) => s.favoriteCategories);
   const [filter, setFilter] = useState("");
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
   const [renaming, setRenaming] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
+  const [active, setActive] = useState(0);
+  const searchRef = useRef<HTMLInputElement>(null);
+  const listRef = useRef<HTMLUListElement>(null);
+
+  useEffect(() => searchRef.current?.focus(), []);
 
   const groups = useMemo(() => {
     const needle = filter.trim().toLowerCase();
@@ -95,11 +106,19 @@ export function FavoritesView({ tab }: { tab: EditorTab }) {
     const known = new Set(categories.map((c) => c.id));
     const loose = favorites.filter((f) => (f.categoryId === null || !known.has(f.categoryId)) && match(f)).sort(byName);
     out.push({ id: UNCATEGORIZED, name: "Uncategorized", items: loose });
-    // while searching, only groups with matches; otherwise empty categories stay visible to drop into
+    // while searching, only groups with matches; otherwise empty categories stay visible
     return out.filter((g) => (needle ? g.items.length > 0 : g.id !== UNCATEGORIZED || g.items.length > 0));
   }, [favorites, categories, filter]);
 
+  // favorites in display order, for keyboard navigation
+  const visible = useMemo(() => groups.flatMap((g) => (!collapsed.has(g.id) || filter ? g.items : [])), [groups, collapsed, filter]);
   const shown = groups.reduce((n, g) => n + g.items.length, 0);
+
+  useEffect(() => setActive(0), [filter]);
+  useEffect(() => {
+    listRef.current?.querySelector("[data-active]")?.scrollIntoView({ block: "nearest" });
+  }, [active]);
+
   const toggle = (id: string) =>
     setCollapsed((s) => {
       const next = new Set(s);
@@ -108,37 +127,45 @@ export function FavoritesView({ tab }: { tab: EditorTab }) {
       return next;
     });
 
-  const addCurrent = () => openAddFavorite(tab.sql, tab.connId);
-
-  if (favorites.length === 0 && categories.length === 0 && !creating) {
-    return (
-      <div className="flex flex-1 flex-col items-center justify-center gap-3 p-6 text-[13px] text-muted">
-        <Star size={28} className="opacity-60" />
-        <p>Save queries you use often: right-click in the editor and choose “Add to favorites”.</p>
-        <Button disabled={!tab.sql.trim()} onClick={addCurrent}>
-          <Star size={15} /> Add current query
-        </Button>
-      </div>
-    );
-  }
+  const onKeyDown = (e: React.KeyboardEvent) => {
+    if (e.target !== searchRef.current) return;
+    const f = visible[active];
+    if (e.key === "ArrowDown") {
+      e.preventDefault();
+      setActive((i) => Math.min(i + 1, visible.length - 1));
+    } else if (e.key === "ArrowUp") {
+      e.preventDefault();
+      setActive((i) => Math.max(i - 1, 0));
+    } else if (e.key === "Enter" && f) {
+      e.preventDefault();
+      if (e.shiftKey) openInNewTab(tab, f);
+      else insertFavorite(tab, f);
+      onClose();
+    }
+  };
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col">
-      <div className="flex h-11 shrink-0 items-center gap-3 px-3.5">
-        <SearchInput value={filter} onChange={setFilter} placeholder="Search favorites by name or SQL..." className="w-80" />
-        <span className="text-[12px] text-muted">
-          {shown === favorites.length ? `${favorites.length} favorite${favorites.length === 1 ? "" : "s"}` : `${shown} of ${favorites.length}`}
-        </span>
-        <div className="ml-auto flex items-center gap-1">
-          <Button className="h-8" onClick={() => setCreating(true)}>
-            <FolderPlus size={15} /> New category
+    <div className="flex max-h-[min(560px,70vh)] flex-col" onKeyDown={onKeyDown}>
+      <div className="space-y-2 border-b border-line p-2.5">
+        <SearchInput inputRef={searchRef} value={filter} onChange={setFilter} placeholder="Search favorites by name or SQL..." className="w-full" />
+        <div className="flex items-center gap-1">
+          <span className="flex-1 pl-0.5 text-[11.5px] text-muted">
+            {shown === favorites.length ? `${favorites.length} favorite${favorites.length === 1 ? "" : "s"}` : `${shown} of ${favorites.length}`}
+          </span>
+          <Button variant="ghost" className="h-7 px-2 text-[12px]" onClick={() => setCreating(true)}>
+            <FolderPlus size={14} /> New category
           </Button>
-          <Button className="h-8" disabled={!tab.sql.trim()} onClick={addCurrent} title="Save the editor's content as a favorite">
-            <Star size={15} /> Add current
+          <Button variant="ghost" className="h-7 px-2 text-[12px]" disabled={!tab.sql.trim()} onClick={onAdd} title="Selection, the statement under the cursor, or everything">
+            <Star size={14} /> Add current
           </Button>
         </div>
       </div>
-      <ul className="min-h-0 flex-1 overflow-y-auto px-3 pb-3">
+      <ul ref={listRef} className="min-h-0 flex-1 overflow-y-auto p-1.5">
+        {favorites.length === 0 && !creating && (
+          <li className="px-3 py-6 text-center text-[12.5px] leading-relaxed text-muted">
+            No favorites yet. Right-click in the editor and choose “Add to favorites”, or use “Add current”.
+          </li>
+        )}
         {creating && (
           <li className="flex items-center gap-2 px-2 py-1.5">
             <Folder size={15} className="text-muted" />
@@ -195,10 +222,10 @@ export function FavoritesView({ tab }: { tab: EditorTab }) {
                 )}
               </div>
               {open && (
-                <ul className="ml-[22px] border-l border-line/60 pl-1.5">
+                <ul className="ml-[15px] border-l border-line/60 pl-1">
                   {g.items.length === 0 && <li className="px-2 py-1.5 text-[12px] text-muted">Empty. Use “Move to” on a favorite to put it here.</li>}
                   {g.items.map((f) => (
-                    <FavoriteRow key={f.id} fav={f} tab={tab} />
+                    <FavoriteRow key={f.id} fav={f} tab={tab} active={visible[active]?.id === f.id} onHover={() => setActive(visible.indexOf(f))} onClose={onClose} />
                   ))}
                 </ul>
               )}
@@ -206,6 +233,7 @@ export function FavoritesView({ tab }: { tab: EditorTab }) {
           );
         })}
       </ul>
+      <div className="border-t border-line px-3 py-1.5 text-[11px] text-muted">Click or Enter inserts at the cursor · Shift+Enter opens a new tab · right-click for more</div>
     </div>
   );
 }
@@ -216,37 +244,45 @@ async function deleteCategory(id: string, name: string, count: number) {
   if (ok) st().removeFavoriteCategory(id);
 }
 
-function FavoriteRow({ fav: f, tab }: { fav: FavoriteQuery; tab: EditorTab }) {
+function FavoriteRow({ fav: f, tab, active, onHover, onClose }: { fav: FavoriteQuery; tab: EditorTab; active: boolean; onHover: () => void; onClose: () => void }) {
   const conn = useStore((s) => s.connections.find((c) => c.id === baseId(f.connId)));
+  const leave = (fn: () => void) => (e: React.MouseEvent) => {
+    e.stopPropagation();
+    fn();
+    onClose();
+  };
+  const stay = (fn: () => void) => (e: React.MouseEvent) => {
+    e.stopPropagation();
+    fn();
+  };
   return (
     <li
-      onDoubleClick={() => insertFavorite(tab, f)}
-      onContextMenu={(e) => st().openContextMenu(e, favoriteMenu(tab, f))}
-      title="Double-click to insert into the editor"
-      className="group flex gap-2.5 rounded-md px-2 py-2 hover:bg-hover"
+      data-active={active || undefined}
+      onMouseEnter={onHover}
+      onClick={leave(() => insertFavorite(tab, f))}
+      onContextMenu={(e) => st().openContextMenu(e, favoriteMenu(tab, f, onClose))}
+      title="Click to insert at the cursor"
+      className={cx("group flex cursor-pointer gap-2.5 rounded-md px-2 py-1.5", active && "bg-accent-soft")}
     >
       <Star size={14} className="mt-0.5 shrink-0 text-warn" fill="currentColor" />
       <div className="min-w-0 flex-1">
-        <div className="mb-0.5 flex items-center gap-2 text-[12.5px]">
+        <div className="flex items-center gap-2 text-[12.5px]">
           <span className="truncate font-medium text-fg">{f.name}</span>
           {conn && <span className="shrink-0 text-[11px] text-muted">· {conn.name}</span>}
         </div>
-        <pre className="selectable line-clamp-2 font-mono text-[11.5px] leading-relaxed whitespace-pre-wrap text-fg-2">{f.sql}</pre>
+        <pre className="line-clamp-2 font-mono text-[11px] leading-relaxed whitespace-pre-wrap text-fg-2">{f.sql}</pre>
       </div>
       <div className="flex shrink-0 items-start gap-0.5 opacity-0 transition-opacity group-hover:opacity-100">
-        <IconButton title="Insert at cursor" onClick={() => insertFavorite(tab, f)}>
-          <TextCursorInput size={14} />
-        </IconButton>
-        <IconButton title="Open in new tab" onClick={() => openInNewTab(tab, f)}>
+        <IconButton title="Open in new tab" onClick={leave(() => openInNewTab(tab, f))}>
           <SquarePlus size={14} />
         </IconButton>
-        <IconButton title="Run" onClick={() => void st().runTab(tab.id, f.sql)}>
+        <IconButton title="Run" onClick={leave(() => void st().runTab(tab.id, f.sql))}>
           <Play size={14} />
         </IconButton>
-        <IconButton title="Edit" onClick={() => st().setUi({ favoriteDialog: { favorite: f } })}>
+        <IconButton title="Edit" onClick={stay(() => st().setUi({ favoriteDialog: { favorite: f } }))}>
           <Pencil size={14} />
         </IconButton>
-        <IconButton title="Delete" onClick={() => void deleteFavorite(f)}>
+        <IconButton title="Delete" onClick={stay(() => void deleteFavorite(f))}>
           <Trash2 size={14} />
         </IconButton>
       </div>
@@ -268,6 +304,7 @@ function NameInput({ initial, placeholder, onDone }: { initial: string; placehol
       onChange={(e) => setValue(e.target.value)}
       onBlur={() => onDone(value.trim())}
       onKeyDown={(e) => {
+        e.stopPropagation();
         if (e.key === "Enter") onDone(value.trim());
         else if (e.key === "Escape") onDone("");
       }}
@@ -303,10 +340,6 @@ function FavoriteDialogView() {
     rememberCategory(categoryId);
     st().saveFavorite({ ...favorite, name: name.trim(), sql: sql.trim(), categoryId });
     close();
-    if (!editing) {
-      const tabId = st().activeTabId;
-      if (tabId) st().patchRuntime(tabId, { resultTab: "favorites" });
-    }
   };
 
   return (

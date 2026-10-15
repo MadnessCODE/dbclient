@@ -39,7 +39,7 @@ import { useActiveTab, useStore, type EditorTab, type MenuEntry } from "../store
 import { Button, cx, DbIcon, EnvBadge, IconButton, Spinner, StatusDot, MOD } from "./ui";
 import { connColor, isProduction, tint } from "../lib/connStyle";
 import { setActiveEditor } from "../lib/editorBridge";
-import { openAddFavorite } from "./FavoritesView";
+import { FavoritesPicker, openAddFavorite } from "./FavoritesView";
 import { baseId, dbOf, isMultiDb, subId } from "../lib/connIds";
 
 type MonacoEditor = MonacoApi.editor.IStandaloneCodeEditor;
@@ -318,11 +318,9 @@ function Toolbar({ tab, editorRef }: { tab: EditorTab; editorRef: React.RefObjec
       <Button className="h-9 px-4" onClick={() => formatEditor(editorRef.current, tab)}>
         <WandSparkles size={16} /> Format
       </Button>
+      <FavoritesButton tab={tab} editorRef={editorRef} />
 
       <div className="relative ml-auto flex items-center gap-1">
-        <IconButton title="Add to favorites (selection, current statement or everything)" onClick={() => openAddFavorite(favoriteSql(editorRef.current, tab), tab.connId)}>
-          <Star size={17} />
-        </IconButton>
         <IconButton title={`Save (${MOD}+S)`} onClick={() => void saveTab(tab)}>
           <Save size={17} />
         </IconButton>
@@ -341,6 +339,61 @@ function Toolbar({ tab, editorRef }: { tab: EditorTab; editorRef: React.RefObjec
         )}
       </div>
     </div>
+  );
+}
+
+/** Toolbar button with the favorites dropdown. */
+function FavoritesButton({ tab, editorRef }: { tab: EditorTab; editorRef: React.RefObject<MonacoEditor | null> }) {
+  const [open, setOpen] = useState(false);
+  const count = useStore((s) => s.favorites.length);
+  const btnRef = useRef<HTMLSpanElement>(null);
+  const panelRef = useRef<HTMLDivElement>(null);
+  const close = useCallback(() => setOpen(false), []);
+
+  useEffect(() => {
+    if (!open) return;
+    const onDown = (e: MouseEvent) => {
+      const t = e.target as HTMLElement;
+      // its own context menus and dialogs keep it open
+      if (panelRef.current?.contains(t) || btnRef.current?.contains(t) || t.closest("[data-context-menu]") || useStore.getState().favoriteDialog) return;
+      setOpen(false);
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape" && !useStore.getState().favoriteDialog && !useStore.getState().contextMenu) setOpen(false);
+    };
+    window.addEventListener("mousedown", onDown);
+    window.addEventListener("keydown", onKey);
+    return () => {
+      window.removeEventListener("mousedown", onDown);
+      window.removeEventListener("keydown", onKey);
+    };
+  }, [open]);
+
+  const r = open ? btnRef.current?.getBoundingClientRect() : undefined;
+  const width = 480;
+
+  return (
+    <>
+      <span ref={btnRef} className="flex">
+        <Button className={cx("h-9 px-4", open && "border-accent/60 text-fg")} onClick={() => setOpen((v) => !v)} title="Saved queries">
+          <Star size={16} /> Favorites
+          {count > 0 && <span className="text-[11px] text-muted">{count}</span>}
+          <ChevronDown size={14} className="text-muted" />
+        </Button>
+      </span>
+      {open &&
+        r &&
+        createPortal(
+          <div
+            ref={panelRef}
+            style={{ width, top: r.bottom + 4, left: Math.max(8, Math.min(r.left, window.innerWidth - width - 8)) }}
+            className="fixed z-40 overflow-hidden rounded-lg border border-line-strong bg-raised shadow-xl"
+          >
+            <FavoritesPicker tab={tab} onClose={close} onAdd={() => openAddFavorite(favoriteSql(editorRef.current, tab), tab.connId)} />
+          </div>,
+          document.body,
+        )}
+    </>
   );
 }
 

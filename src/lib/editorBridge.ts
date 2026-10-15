@@ -19,8 +19,9 @@ export function insertIntoEditor(tabId: string, text: string): boolean {
   // keep statements apart when the editor has other SQL
   let insert = model.getValue().trim() && !/;\s*$/.test(text) ? `${text.trimEnd()};` : text;
   if (sel.isEmpty()) {
-    const before = model.getLineContent(sel.startLineNumber).slice(0, sel.startColumn - 1);
-    if (before.trim()) insert = `\n${insert}`;
+    const line = model.getLineContent(sel.startLineNumber);
+    if (line.slice(0, sel.startColumn - 1).trim()) insert = `\n${insert}`;
+    if (line.slice(sel.startColumn - 1).trim()) insert = `${insert}\n`;
   }
   editor.pushUndoStop();
   editor.executeEdits("favorite", [{ range: sel, text: insert, forceMoveMarkers: true }]);

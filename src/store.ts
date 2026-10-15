@@ -54,7 +54,7 @@ export interface Message {
   text: string;
 }
 
-export type ResultTab = "results" | "structure" | "messages" | "history" | "favorites" | "explain";
+export type ResultTab = "results" | "structure" | "messages" | "history" | "explain";
 
 export interface ServerSort {
   base: string;
