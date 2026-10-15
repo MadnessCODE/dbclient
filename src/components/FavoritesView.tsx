@@ -89,7 +89,8 @@ export function FavoritesPicker({ tab, onAdd, onClose }: { tab: EditorTab; onAdd
   const favorites = useStore((s) => s.favorites);
   const categories = useStore((s) => s.favoriteCategories);
   const [filter, setFilter] = useState("");
-  const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
+  // categories start collapsed; a search opens the ones with matches
+  const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [renaming, setRenaming] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
   const [active, setActive] = useState(0);
@@ -111,7 +112,7 @@ export function FavoritesPicker({ tab, onAdd, onClose }: { tab: EditorTab; onAdd
   }, [favorites, categories, filter]);
 
   // favorites in display order, for keyboard navigation
-  const visible = useMemo(() => groups.flatMap((g) => (!collapsed.has(g.id) || filter ? g.items : [])), [groups, collapsed, filter]);
+  const visible = useMemo(() => groups.flatMap((g) => (expanded.has(g.id) || filter ? g.items : [])), [groups, expanded, filter]);
   const shown = groups.reduce((n, g) => n + g.items.length, 0);
 
   useEffect(() => setActive(0), [filter]);
@@ -120,7 +121,7 @@ export function FavoritesPicker({ tab, onAdd, onClose }: { tab: EditorTab; onAdd
   }, [active]);
 
   const toggle = (id: string) =>
-    setCollapsed((s) => {
+    setExpanded((s) => {
       const next = new Set(s);
       if (next.has(id)) next.delete(id);
       else next.add(id);
@@ -181,7 +182,7 @@ export function FavoritesPicker({ tab, onAdd, onClose }: { tab: EditorTab; onAdd
         )}
         {shown === 0 && filter && <li className="px-2 py-3 text-[12px] text-muted">Nothing matches “{filter}”.</li>}
         {groups.map((g) => {
-          const open = !collapsed.has(g.id) || !!filter;
+          const open = expanded.has(g.id) || !!filter;
           const isCat = g.id !== UNCATEGORIZED;
           const remove = () => void deleteCategory(g.id, g.name, favorites.filter((f) => f.categoryId === g.id).length);
           const menu: MenuEntry[] = [
