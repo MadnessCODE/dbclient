@@ -137,7 +137,22 @@ function useListKeys(count: number, pick: (i: number) => void, close: () => void
   return { hi, setHi, onKey };
 }
 
-export function Select({ value, onChange, options, disabled, className }: { value: string; onChange: (v: string) => void; options: SelectOption[]; disabled?: boolean; className?: string }) {
+export function Select({
+  value,
+  onChange,
+  options,
+  disabled,
+  className,
+  placeholder,
+}: {
+  value: string;
+  onChange: (v: string) => void;
+  options: SelectOption[];
+  disabled?: boolean;
+  className?: string;
+  /** Shown while the value matches no option */
+  placeholder?: string;
+}) {
   const btn = useRef<HTMLButtonElement>(null);
   const [open, setOpen] = useState(false);
   const [filter, setFilter] = useState("");
@@ -173,7 +188,7 @@ export function Select({ value, onChange, options, disabled, className }: { valu
         }}
         className={cx(field, "flex items-center gap-2 text-left", open && "border-accent", className)}
       >
-        <span className="min-w-0 flex-1 truncate">{current ? (current.label ?? current.value) : value}</span>
+        <span className={cx("min-w-0 flex-1 truncate", !current && !value && "text-muted")}>{current ? (current.label ?? current.value) : value || placeholder}</span>
         <ChevronDown size={15} className="shrink-0 text-muted" />
       </button>
       {open && btn.current && (

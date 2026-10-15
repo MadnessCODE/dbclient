@@ -37,6 +37,7 @@ import { useStore, type EditorTab, type TableRef } from "../store";
 import { isProduction } from "../lib/connStyle";
 import { Button, cx, IconButton, Modal, Spinner, MOD } from "./ui";
 import { baseId } from "../lib/connIds";
+import { Select } from "./Select";
 
 type Section = "columns" | "indexes" | "foreignKeys" | "ddl" | "info";
 
@@ -69,7 +70,7 @@ export function StructurePanel({ tab }: { tab: EditorTab }) {
     <div className="flex min-h-0 flex-1 flex-col">
       <TablePicker tab={tab} schema={connState.schema} target={target} />
       {target ? (
-        <StructureView key={`${tab.connId}:${target.schema}.${target.table}`} connId={cfg.id} kind={cfg.kind} target={target} schemaTree={connState.schema} />
+        <StructureView key={`${tab.connId}:${target.schema}.${target.table}`} connId={tab.connId!} kind={cfg.kind} target={target} schemaTree={connState.schema} />
       ) : (
         <Centered text="Pick a table above, or open one from the schema tree." />
       )}
@@ -91,35 +92,25 @@ function TablePicker({ tab, schema, target }: { tab: EditorTab; schema?: SchemaT
     }
     return out;
   }, [schema]);
-  const groups = [...new Set(options.map((o) => o.group))];
   const value = target ? `${target.schema}\u0000${target.table}` : "";
+  const shown =
+    target && !options.some((o) => o.value === value) ? [{ value, label: `${target.schema}.${target.table}`, group: "" }, ...options] : options;
 
   return (
     <div className="flex h-11 shrink-0 items-center gap-2 px-3.5">
       <Sheet size={16} className="text-muted" />
       <span className="text-[13px] text-muted">Table</span>
-      <select
-        value={value}
-        onChange={(e) => {
-          const [schemaName, table] = e.target.value.split("\u0000");
-          useStore.getState().updateTab(tab.id, { table: { schema: schemaName, table } });
-        }}
-        className="h-8 max-w-[320px] min-w-[200px] rounded-md border border-line-strong bg-panel px-2 text-[13px] text-fg outline-none focus:border-accent"
-      >
-        {!target && <option value="">Select table…</option>}
-        {target && !options.some((o) => o.value === value) && <option value={value}>{`${target.schema}.${target.table}`}</option>}
-        {groups.map((g) => (
-          <optgroup key={g} label={g}>
-            {options
-              .filter((o) => o.group === g)
-              .map((o) => (
-                <option key={o.value} value={o.value}>
-                  {o.label}
-                </option>
-              ))}
-          </optgroup>
-        ))}
-      </select>
+      <div className="w-[320px]">
+        <Select
+          value={value}
+          placeholder="Select table…"
+          onChange={(v) => {
+            const [schemaName, table] = v.split("\u0000");
+            useStore.getState().updateTab(tab.id, { table: { schema: schemaName, table } });
+          }}
+          options={shown.map((o) => ({ value: o.value, label: o.label, group: o.group || undefined }))}
+        />
+      </div>
     </div>
   );
 }
