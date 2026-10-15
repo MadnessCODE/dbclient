@@ -39,3 +39,5 @@ ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
 );
 // Tells the boot check in index.html that the bundle loaded.
 (window as unknown as { __dbcBooted: boolean }).__dbcBooted = true;
+// a slow first load (e.g. Vite optimizing deps in dev) may have shown it already
+document.getElementById("boot-error")?.remove();

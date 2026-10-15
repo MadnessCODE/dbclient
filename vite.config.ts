@@ -1,10 +1,12 @@
-import { defineConfig } from "vite";
+import { defineConfig, searchForWorkspaceRoot } from "vite";
 import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
 // @ts-expect-error type error without @types/node package
 import process from "node:process";
 // @ts-expect-error type error without @types/node package
 import path from "node:path";
+// @ts-expect-error type error without @types/node package
+import fs from "node:fs";
 const host = process.env.TAURI_DEV_HOST;
 
 // https://vite.dev/config/
@@ -35,6 +37,8 @@ export default defineConfig(() => ({
           port: 1421,
         }
       : undefined,
+    // node_modules may be a link to another checkout (git worktrees)
+    fs: { allow: [searchForWorkspaceRoot(process.cwd()), fs.realpathSync("node_modules")] },
     watch: {
       // 3. tell Vite to ignore watching `src-tauri`
       ignored: ["**/src-tauri/**"],
