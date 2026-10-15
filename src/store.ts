@@ -252,6 +252,8 @@ interface State {
   usersDialog: { connId: string; user?: string; drop?: boolean } | null;
   /** ER diagram of a schema */
   erDialog: { connId: string; schema: string } | null;
+  /** PostgreSQL CREATE DATABASE on a server connection */
+  createDbDialog: { connId: string } | null;
   /** Database export: a whole database, or one schema */
   dbExport: { connId: string; schema?: string } | null;
   /** Import connections from other tools */
@@ -310,7 +312,7 @@ interface State {
   setSettings: (patch: Partial<Settings>) => void;
   setFocus: (focus: TreeFocus | null) => void;
   setUi: (
-    patch: Partial<Pick<State, "leftPanel" | "view" | "connDialog" | "projectDialog" | "paletteOpen" | "settingsOpen" | "aboutOpen" | "resultsMaximized" | "contextMenu" | "actionDialog" | "exportJob" | "importDialog" | "usersDialog" | "usersVersion" | "erDialog" | "dbExport" | "connImport" | "favoriteDialog">>,
+    patch: Partial<Pick<State, "leftPanel" | "view" | "connDialog" | "projectDialog" | "paletteOpen" | "settingsOpen" | "aboutOpen" | "resultsMaximized" | "contextMenu" | "actionDialog" | "exportJob" | "importDialog" | "usersDialog" | "usersVersion" | "erDialog" | "createDbDialog" | "dbExport" | "connImport" | "favoriteDialog">>,
   ) => void;
   openContextMenu: (e: React.MouseEvent, items: MenuEntry[]) => void;
 }
@@ -374,6 +376,7 @@ export const useStore = create<State>()(
         importDialog: null,
         usersDialog: null,
         erDialog: null,
+        createDbDialog: null,
         dbExport: null,
         connImport: false,
         usersVersion: 0,

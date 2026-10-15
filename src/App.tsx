@@ -17,6 +17,7 @@ import { ImportWizard } from "./components/ImportWizard";
 import { ImportJobDialog, ImportToasts } from "./components/ImportJobs";
 import { UsersDialogHost } from "./components/UsersDialog";
 import { ErDiagramHost } from "./components/ErDiagram";
+import { CreateDatabaseHost } from "./components/CreateDatabase";
 import { ExportDatabaseHost } from "./components/ExportDatabase";
 import { ImportConnectionsHost } from "./components/ImportConnections";
 import { FavoriteDialogHost } from "./components/FavoritesView";
@@ -99,6 +100,7 @@ export default function App() {
       <ImportJobDialog />
       <UsersDialogHost />
       <ErDiagramHost />
+      <CreateDatabaseHost />
       <ExportDatabaseHost />
       <ImportConnectionsHost />
       <FavoriteDialogHost />

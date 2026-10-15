@@ -347,7 +347,7 @@ function UsersDialog({ connId, initialUser, initialDrop, onClose }: { connId: st
 
 type SetDraft = React.Dispatch<React.SetStateAction<Draft | null>>;
 
-function Field({ label, hint, children }: { label: string; hint?: string; children: React.ReactNode }) {
+export function Field({ label, hint, children }: { label: string; hint?: string; children: React.ReactNode }) {
   return (
     <label className="flex flex-col gap-1.5">
       <span className="text-[12.5px] text-fg-2">{label}</span>
@@ -357,7 +357,7 @@ function Field({ label, hint, children }: { label: string; hint?: string; childr
   );
 }
 
-function Toggle({ checked, onChange, label, hint, danger }: { checked: boolean; onChange: (v: boolean) => void; label: string; hint?: string; danger?: boolean }) {
+export function Toggle({ checked, onChange, label, hint, danger }: { checked: boolean; onChange: (v: boolean) => void; label: string; hint?: string; danger?: boolean }) {
   return (
     <button type="button" onClick={() => onChange(!checked)} className="flex items-start gap-2.5 text-left">
       <span

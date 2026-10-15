@@ -315,16 +315,7 @@ function createSchema(cfg: ConnectionConfig) {
 
 
 function createDatabase(cfg: ConnectionConfig) {
-  st().setUi({
-    actionDialog: {
-      title: "Create database",
-      connId: cfg.id,
-      confirmLabel: "Create",
-      input: { label: "Name", value: "" },
-      buildSql: (n) => `CREATE DATABASE ${quoteIdent(n || "new_database", "postgres")};`,
-      afterRun: () => void st().loadDatabases(cfg.id),
-    },
-  });
+  st().setUi({ createDbDialog: { connId: cfg.id } });
 }
 
 /** A database on a PostgreSQL server listed under its connection (`cfg.id` is "<connection>::<database>"). */

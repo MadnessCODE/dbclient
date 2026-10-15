@@ -96,6 +96,14 @@ export async function startImport(meta: Omit<ImportJob, "id" | "startedAt" | "se
   announce(id);
 }
 
+/** Toast for work that isn't an import job; success hides itself, errors stay. */
+export function pushToast(tone: Toast["tone"], title: string, body: string) {
+  const toast: Toast = { id: crypto.randomUUID(), tone, title, body };
+  useImports.setState((st) => ({ toasts: [...st.toasts, toast] }));
+  if (tone === "ok") setTimeout(() => useImports.getState().closeToast(toast.id), 7000);
+  if (!document.hasFocus()) void osNotify(title, body);
+}
+
 /** In-app toast when the dialog is closed, plus a system notification when the app is in the background. */
 function announce(id: string) {
   const s = useImports.getState();
