@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>What's new · DB Client</title>
+    <meta name="description" content="Release notes for DB Client: new features with screenshots and how to use them, fixes and improvements in every version." />
+    <meta property="og:title" content="What's new in DB Client" />
+    <meta property="og:description" content="New features, fixes and improvements in every version of DB Client." />
+    <meta property="og:type" content="website" />
+    <meta name="theme-color" content="#070d1a" />
+    <link rel="icon" href="icon.svg" type="image/svg+xml" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+    <link rel="stylesheet" href="style.css" />
+    <link rel="stylesheet" href="whats-new.css" />
+  </head>
+  <body>
+    <div class="bg" aria-hidden="true">
+      <div class="blob b1"></div>
+      <div class="blob b2"></div>
+      <div class="grid-lines"></div>
+    </div>
+
+    <header class="nav">
+      <a class="brand" href="./"><img src="icon.svg" alt="" width="28" height="28" /> DB Client <span class="beta">BETA</span></a>
+      <nav>
+        <a href="./#features">Features</a>
+        <a href="whats-new.html" class="active">What's new</a>
+        <a href="./#download">Download</a>
+        <a class="gh" href="https://github.com/MadnessCODE/dbclient" target="_blank" rel="noopener">
+          <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor" aria-hidden="true"><path d="M12 .3a12 12 0 0 0-3.8 23.38c.6.12.83-.26.83-.57L9 21.07c-3.34.72-4.04-1.61-4.04-1.61-.55-1.39-1.34-1.76-1.34-1.76-1.08-.74.09-.73.09-.73 1.2.09 1.84 1.24 1.84 1.24 1.07 1.83 2.81 1.3 3.5 1 .1-.78.42-1.31.76-1.61-2.67-.3-5.47-1.33-5.47-5.93 0-1.31.47-2.38 1.24-3.22-.14-.3-.54-1.52.1-3.18 0 0 1-.32 3.3 1.23a11.5 11.5 0 0 1 6 0c2.28-1.55 3.29-1.23 3.29-1.23.64 1.66.24 2.88.12 3.18a4.65 4.65 0 0 1 1.23 3.22c0 4.61-2.8 5.63-5.48 5.92.42.36.81 1.1.81 2.22l-.01 3.29c0 .32.21.69.82.57A12 12 0 0 0 12 .3" /></svg>
+          GitHub
+        </a>
+      </nav>
+    </header>
+
+    <main class="wn">
+      <section class="wn-hero">
+        <p class="pill"><span class="dot"></span> Release notes</p>
+        <h1>What's <span class="grad">new</span></h1>
+        <p class="lead">New features with screenshots and how to use them, plus everything that got better, in every version of DB Client.</p>
+        <nav class="wn-versions" id="versions" aria-label="Versions"></nav>
+      </section>
+
+      <div id="releases" class="wn-releases">
+        <p class="wn-loading">Loading release notes…</p>
+      </div>
+    </main>
+
+    <footer>
+      <span>© 2026 MadnessCODE · MIT License</span>
+      <a href="https://github.com/MadnessCODE/dbclient/releases" target="_blank" rel="noopener">All releases on GitHub</a>
+    </footer>
+
+    <div class="lightbox" id="lightbox" hidden>
+      <button class="lb-close" aria-label="Close">×</button>
+      <figure>
+        <img alt="" />
+        <figcaption></figcaption>
+      </figure>
+    </div>
+
+    <script src="whats-new.js"></script>
+  </body>
+</html>

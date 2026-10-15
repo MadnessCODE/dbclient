@@ -1,12 +1,13 @@
 {
   "name": "dbclient",
   "private": true,
-  "version": "0.1.4",
+  "version": "0.1.5",
   "author": "MadnessCODE",
   "type": "module",
   "scripts": {
     "dev": "vite",
     "build": "tsc && vite build",
+    "shots": "node tools/shots/run.mjs",
     "preview": "vite preview",
     "tauri": "tauri"
   },

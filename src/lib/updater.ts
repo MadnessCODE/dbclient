@@ -4,7 +4,7 @@ import { check, type Update } from "@tauri-apps/plugin-updater";
 import { relaunch } from "@tauri-apps/plugin-process";
 import { getVersion } from "@tauri-apps/api/app";
 
-const REPO = "https://github.com/MadnessCODE/dbclient";
+const SITE = "https://madnesscode.github.io/dbclient";
 /** How often a running app looks for a new version. */
 const CHECK_EVERY_MS = 3 * 60 * 60 * 1000;
 const LAST_VERSION_KEY = "dbc.lastVersion";
@@ -38,7 +38,8 @@ export const useUpdater = create<UpdaterState>((set, get) => ({
   },
 }));
 
-export const releaseUrl = (version: string) => `${REPO}/releases/tag/v${version.replace(/^v/, "")}`;
+/** Release notes with screenshots on the website (rendered from CHANGELOG.md). */
+export const releaseUrl = (version: string) => `${SITE}/whats-new.html#v${version.replace(/^v/, "")}`;
 
 let pending: Update | null = null;
 

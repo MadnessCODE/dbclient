@@ -61,6 +61,8 @@ jobs:
             echo "body<<RELEASE_NOTES_EOF"
             echo "$notes"
             echo
+            echo "**[What's new in $v, with screenshots →](https://madnesscode.github.io/dbclient/whats-new.html#v$v)**"
+            echo
             cat .github/release-footer.md
             echo "RELEASE_NOTES_EOF"
           } >> "$GITHUB_OUTPUT"
