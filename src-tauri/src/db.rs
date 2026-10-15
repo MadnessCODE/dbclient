@@ -243,6 +243,9 @@ pub struct ColumnMeta {
     /// Postgres (table oid, attnum) from RowDescription, used to resolve `origin`
     #[serde(skip)]
     pg_rel: Option<(u32, i16)>,
+    /// Postgres type oid when the driver doesn't know the type (extensions: citext, hstore...)
+    #[serde(skip)]
+    pg_type: Option<u32>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -394,6 +397,7 @@ fn pg_columns(row: &PgRow) -> Vec<ColumnMeta> {
                 (Some(oid), Some(att)) if oid.0 != 0 && att > 0 => Some((oid.0, att)),
                 _ => None,
             },
+            pg_type: if c.type_info().name() == "?" { c.type_info().oid().map(|o| o.0) } else { None },
         })
         .collect()
 }
@@ -406,7 +410,7 @@ fn my_columns(row: &MySqlRow) -> Vec<ColumnMeta> {
                 let (schema, table) = tc.table.split_once('.')?;
                 Some(ColumnRef { schema: schema.into(), table: table.into(), column: tc.name.to_string() })
             });
-            ColumnMeta { name: c.name().to_string(), type_name: friendly_type(c.type_info().name()), origin, fk: None, pg_rel: None }
+            ColumnMeta { name: c.name().to_string(), type_name: friendly_type(c.type_info().name()), origin, fk: None, pg_rel: None, pg_type: None }
         })
         .collect()
 }
@@ -415,6 +419,24 @@ fn my_columns(row: &MySqlRow) -> Vec<ColumnMeta> {
 async fn annotate_columns(pool: &DbPool, sets: &mut [ResultSet]) -> AppResult<()> {
     match pool {
         DbPool::Pg(_) => {
+            let mut oids: Vec<u32> = sets.iter().flat_map(|s| s.columns.iter()).filter_map(|c| c.pg_type).collect();
+            oids.sort_unstable();
+            oids.dedup();
+            if !oids.is_empty() {
+                let list = oids.iter().map(|o| o.to_string()).collect::<Vec<_>>().join(",");
+                let mut names = HashMap::new();
+                let rows = pool.text_rows(&format!("select oid::int8, typname from pg_type where oid in ({list})")).await.unwrap_or_default();
+                for r in rows {
+                    if let (Some(oid), Some(name)) = (r[0].as_deref().and_then(|v| v.parse::<u32>().ok()), r[1].clone()) {
+                        names.insert(oid, name);
+                    }
+                }
+                for c in sets.iter_mut().flat_map(|s| s.columns.iter_mut()) {
+                    if let Some(name) = c.pg_type.and_then(|o| names.get(&o)) {
+                        c.type_name = name.clone();
+                    }
+                }
+            }
             let mut pairs: Vec<(u32, i16)> = sets.iter().flat_map(|s| s.columns.iter()).filter_map(|c| c.pg_rel).collect();
             pairs.sort_unstable();
             pairs.dedup();
