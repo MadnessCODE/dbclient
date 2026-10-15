@@ -1,11 +1,14 @@
 // Users & privileges: accounts on the left, account and privileges on the right; edits are previewed as SQL.
 import { createContext, useContext, useEffect, useMemo, useState } from "react";
-import { Check, Copy, Dices, Eye, EyeOff, Sheet, KeyRound, Lock, Minus, Plus, RotateCcw, Search, ShieldCheck, Trash2, TriangleAlert, UserRound, Users } from "lucide-react";
-import { errorText, type DbKind, type SchemaInfo } from "../lib/api";
+import { Check, Copy, Database, Dices, Layers, Eye, EyeOff, Sheet, KeyRound, Lock, Minus, Plus, RotateCcw, Search, ShieldCheck, Trash2, TriangleAlert, UserRound, Users } from "lucide-react";
+import { api, errorText, type DbKind, type SchemaInfo } from "../lib/api";
 import { isProduction } from "../lib/connStyle";
 import {
   accountKey,
   applyStatements,
+  buildPgAccount,
+  buildPgAll,
+  buildPgPrivileges,
   buildSql,
   currentObjectPrivs,
   dropSql,
@@ -13,6 +16,7 @@ import {
   GRANT_OPTION,
   listAccounts,
   loadMyPrivileges,
+  loadPgOverview,
   loadPgPrivileges,
   loadPgTotals,
   loadViewWritability,
@@ -26,21 +30,30 @@ import {
   PG_SCHEMA_PRIVS,
   PG_SEQ_PRIVS,
   PG_TABLE_PRIVS,
+  pgIdent,
   pgPreset,
   PRESETS,
   type Account,
   type Draft,
   type MyAccount,
+  type PgAllTarget,
+  type PgDbAccess,
   type PgRole,
   type PrivDef,
+  type Privileges,
   type Stmt,
 } from "../lib/users";
 import { useStore } from "../store";
 import { Button, cx, EnvBadge, Modal, Spinner } from "./ui";
-import { baseId } from "../lib/connIds";
+import { baseId, dbOf, isMultiDb, subId } from "../lib/connIds";
 
 const input = "h-8 w-full rounded-md border border-line-strong bg-bg/50 px-2.5 text-[13px] text-fg outline-none focus:border-accent";
 const clone = <T,>(x: T): T => JSON.parse(JSON.stringify(x));
+
+/** Statements for one database */
+type Group = { db: string; stmts: Stmt[] };
+/** A role's privileges in one database: as loaded, as edited */
+type DbPrivs = { original: Privileges; privileges: Privileges; objectTargets: Record<string, string[]> };
 
 /** Updatable views (objKey -> true); materialized views never are. */
 const ViewWritability = createContext<Record<string, boolean>>({});
@@ -88,10 +101,17 @@ function newDraft(kind: DbKind): Draft {
 
 function UsersDialog({ connId, initialUser, initialDrop, onClose }: { connId: string; initialUser?: string; initialDrop?: boolean; onClose: () => void }) {
   const cfg = useStore((s) => s.connections.find((c) => c.id === baseId(connId)));
-  const conn = useStore((s) => s.conn[connId]);
   const kind: DbKind = cfg?.kind ?? "postgres";
   const mysql = kind === "mysql";
-  const dbName = conn?.info?.database || cfg?.database || "";
+  // PostgreSQL privileges live in each database: on a server connection the dialog switches between them
+  const server = baseId(connId)!;
+  const multi = isMultiDb(cfg);
+  const serverDb = useStore((s) => s.conn[server]?.info?.database ?? "");
+  const databases = useStore((s) => s.conn[server]?.databases);
+  const [privDb, setPrivDb] = useState(() => dbOf(connId) ?? (useStore.getState().conn[connId]?.info?.database || cfg?.database || ""));
+  const privConn = !multi ? connId : !privDb || privDb === serverDb ? server : subId(server, privDb);
+  const conn = useStore((s) => s.conn[privConn]);
+  const dbName = mysql ? conn?.info?.database || cfg?.database || "" : privDb || conn?.info?.database || cfg?.database || "";
   const schemaInfos = useMemo(() => (conn?.schema?.schemas ?? []).filter((s) => !s.system), [conn?.schema]);
   const scopes = useMemo(() => schemaInfos.map((s) => s.name), [schemaInfos]);
 
@@ -104,12 +124,19 @@ function UsersDialog({ connId, initialUser, initialDrop, onClose }: { connId: st
   const [loading, setLoading] = useState(false);
   const [detailError, setDetailError] = useState<string | null>(null);
   const [tab, setTab] = useState<"account" | "privileges" | "grants">("account");
-  const [review, setReview] = useState<Stmt[] | null>(null);
+  const [review, setReview] = useState<Group[] | null>(null);
   const [writable, setWritable] = useState<Record<string, boolean>>({});
-  useEffect(() => {
-    loadViewWritability(connId, kind).then(setWritable, () => setWritable({}));
-  }, [connId, kind]);
+  const [dbError, setDbError] = useState<string | null>(null);
   const [dropping, setDropping] = useState(false);
+  /** PostgreSQL server: privilege edits of the databases the user switched away from */
+  const [stash, setStash] = useState<Record<string, DbPrivs>>({});
+  /** PostgreSQL server: the selected role's access in every database */
+  const [overview, setOverview] = useState<PgDbAccess[] | null>(null);
+  /** PostgreSQL server: settings for every database at once, and whether that view is shown */
+  const [allTarget, setAllTarget] = useState<PgAllTarget>({ db: null, preset: null });
+  const [allView, setAllView] = useState(false);
+  const connectable = useMemo(() => (databases ?? []).filter((d) => d.size !== null).map((d) => d.name), [databases]);
+  const connOf = (db: string) => (!multi ? connId : !db || db === serverDb ? server : subId(server, db));
 
   const reload = async (keep?: string) => {
     setListError(null);
@@ -132,20 +159,52 @@ function UsersDialog({ connId, initialUser, initialDrop, onClose }: { connId: st
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [connId]);
 
-  const statements = useMemo(() => (draft ? buildSql(kind, original, draft) : []), [kind, original, draft]);
+  /** Statements per database; account changes run first, in the database shown */
+  const groups: Group[] = useMemo(() => {
+    if (!draft) return [];
+    if (kind !== "postgres" || !multi) return [{ db: dbName, stmts: buildSql(kind, original, draft) }];
+    const role = (draft.account as PgRole).name;
+    // per database: "All databases" first, then that database's own edits; the role is created/changed first of all
+    const byDb = new Map<string, Stmt[]>([[privDb, []]]);
+    const add = (db: string, stmts: Stmt[]) => byDb.set(db, [...(byDb.get(db) ?? []), ...stmts]);
+    for (const g of buildPgAll(role, allTarget, overview ?? [])) add(g.db, g.stmts);
+    add(privDb, buildPgPrivileges(original?.privileges ?? emptyPrivileges(), draft.privileges, draft.objectTargets, role));
+    for (const [db, d] of Object.entries(stash)) if (db !== privDb) add(db, buildPgPrivileges(d.original, d.privileges, d.objectTargets, role));
+    const out = [...byDb].map(([db, stmts]) => ({ db, stmts }));
+    out[0].stmts = [...buildPgAccount(original, draft), ...out[0].stmts];
+    return out.filter((g) => g.stmts.length > 0);
+  }, [kind, multi, dbName, privDb, original, draft, stash, allTarget, overview]);
+  const statements = useMemo(() => groups.flatMap((g) => g.stmts), [groups]);
   const dirty = statements.length > 0 && (selected !== "new" || accountKey(draft!.account).replace(/@.*$/, "") !== "");
+  const editedDbs = new Set(groups.filter((g) => g.stmts.some((x) => !/^(CREATE|ALTER) ROLE|^(GRANT|REVOKE) "[^"]*" (TO|FROM)/.test(x.sql))).map((g) => g.db));
+  if (allTarget.db || allTarget.preset) editedDbs.add("*");
+
+  /** Privileges of the selected role (or totals for a new one) in the database shown */
+  const loadDbPrivs = async (key: string | "new", a?: Account): Promise<DbPrivs> => {
+    if (key === "new") {
+      const objects = await loadPgTotals(privConn).catch(() => ({}));
+      return { original: { ...emptyPrivileges(), objects }, privileges: { ...emptyPrivileges(), objects }, objectTargets: {} };
+    }
+    const p = await loadPgPrivileges(privConn, (a as PgRole).name);
+    return { original: p, privileges: clone(p), objectTargets: {} };
+  };
 
   const select = async (key: string | "new", list = accounts) => {
     setDetailError(null);
     setSelected(key);
+    setStash({});
+    setOverview(null);
+    setAllTarget({ db: null, preset: null });
+    setAllView(false);
     if (key === "new") {
+      if (multi) loadPgOverview(server, null, connectable).then(setOverview, () => setOverview([]));
       setOriginal(null);
       const d = newDraft(kind);
       setDraft(d);
       setTab("account");
       if (kind === "postgres") {
-        const objects = await loadPgTotals(connId).catch(() => ({}));
-        setDraft((cur) => cur && { ...cur, privileges: { ...cur.privileges, objects } });
+        const { privileges } = await loadDbPrivs("new");
+        setDraft((cur) => cur && { ...cur, privileges });
       }
       return;
     }
@@ -154,19 +213,72 @@ function UsersDialog({ connId, initialUser, initialDrop, onClose }: { connId: st
     setLoading(true);
     setDraft(null);
     try {
-      const privileges = a.kind === "mysql" ? await loadMyPrivileges(connId, a) : await loadPgPrivileges(connId, a.name);
-      const d: Draft = {
-        account: a,
-        password: "",
-        privileges,
-        objectTargets: {},
-      };
+      const privileges = a.kind === "mysql" ? await loadMyPrivileges(connId, a) : (await loadDbPrivs(key, a)).original;
+      const d: Draft = { account: a, password: "", privileges, objectTargets: {} };
       setOriginal(d);
       setDraft(clone(d));
     } catch (e) {
       setDetailError(errorText(e));
     } finally {
       setLoading(false);
+    }
+    if (a.kind === "postgres" && multi) loadPgOverview(server, a.name, connectable).then(setOverview, () => setOverview([]));
+  };
+
+  // the privileges database: open it, load its schemas, then the role's privileges there
+  // (kept edits come back from the stash)
+  useEffect(() => {
+    let alive = true;
+    void (async () => {
+      setDbError(null);
+      const st = useStore.getState();
+      if (st.conn[privConn]?.status !== "connected" && !(await st.connectTo(privConn))) {
+        if (alive) setDbError(useStore.getState().conn[privConn]?.error ?? `Can't connect to ${privDb}.`);
+        return;
+      }
+      if (!useStore.getState().conn[privConn]?.schema) await useStore.getState().refreshSchema(privConn);
+      if (!alive) return;
+      loadViewWritability(privConn, kind).then((w) => alive && setWritable(w), () => alive && setWritable({}));
+      if (!selected || !draft || kind !== "postgres") return;
+      const kept = stash[privDb];
+      const next = kept ?? (await loadDbPrivs(selected, original?.account).catch((e) => (setDetailError(errorText(e)), null)));
+      if (!alive || !next) return;
+      setOriginal((o) => o && { ...o, privileges: next.original });
+      setDraft((d) => d && { ...d, privileges: next.privileges, objectTargets: next.objectTargets });
+    })();
+    return () => {
+      alive = false;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [privConn]);
+
+  /** Keeps this database's edits and shows another one */
+  const switchDb = (db: string) => {
+    setAllView(db === "*");
+    if (db === "*" || db === privDb) return;
+    if (draft) setStash((st) => ({ ...st, [privDb]: { original: original?.privileges ?? emptyPrivileges(), privileges: draft.privileges, objectTargets: draft.objectTargets } }));
+    setPrivDb(db);
+  };
+
+  const apply = async (gs: Group[]) => {
+    if (multi) {
+      // one transaction per database; databases without an open connection get a short-lived one
+      await api.executeInDatabases(
+        server,
+        gs.map((g) => ({ database: g.db, statements: g.stmts.map((x) => x.sql.replace(pgIdent("__DB__"), pgIdent(g.db))) })),
+      );
+      return;
+    }
+    for (const [i, g] of gs.entries()) {
+      const id = connOf(g.db);
+      try {
+        if (useStore.getState().conn[id]?.status !== "connected" && !(await useStore.getState().connectTo(id))) throw new Error(`Can't connect to ${g.db}.`);
+        await applyStatements(id, kind, g.stmts, g.db);
+      } catch (e) {
+        if (gs.length === 1) throw e;
+        const done = gs.slice(0, i).map((x) => x.db);
+        throw new Error(`In database ${g.db}: ${errorText(e)}${done.length ? `\n\nAlready applied in: ${done.join(", ")}.` : ""}`);
+      }
     }
   };
 
@@ -185,7 +297,7 @@ function UsersDialog({ connId, initialUser, initialDrop, onClose }: { connId: st
           <Users size={14} className="text-accent" />
           <span className="font-medium text-fg">{cfg?.name}</span>
           <EnvBadge cfg={cfg} />
-          {!mysql && dbName && <span className="text-muted">· privileges shown for database {dbName}</span>}
+          {!mysql && !multi && dbName && <span className="text-muted">· privileges shown for database {dbName}</span>}
         </div>
         <div className="flex h-[600px]">
           {/* accounts */}
@@ -279,7 +391,28 @@ function UsersDialog({ connId, initialUser, initialDrop, onClose }: { connId: st
                     (mysql ? (
                       <MyPrivileges draft={draft} setDraft={setDraft} databases={scopes} infos={schemaInfos} />
                     ) : (
-                      <PgPrivileges draft={draft} setDraft={setDraft} original={original} schemas={scopes} infos={schemaInfos} dbName={dbName} />
+                      <PgPrivileges
+                        draft={draft}
+                        setDraft={setDraft}
+                        original={original}
+                        schemas={scopes}
+                        infos={schemaInfos}
+                        dbName={dbName}
+                        nav={
+                          multi
+                            ? {
+                                databases: connectable.length ? connectable : [privDb],
+                                current: allView ? "*" : privDb,
+                                all: <AllDatabases target={allTarget} setTarget={setAllTarget} overview={overview} superuser={(draft.account as PgRole).superuser} />,
+                                onSwitch: switchDb,
+                                overview,
+                                edited: editedDbs,
+                                error: dbError,
+                                isNew: !original,
+                              }
+                            : undefined
+                        }
+                      />
                     ))}
                   {tab === "grants" && (
                     <pre className="selectable overflow-auto rounded-lg border border-line bg-bg/60 p-3 font-mono text-[12px] leading-relaxed text-fg-2">
@@ -294,10 +427,17 @@ function UsersDialog({ connId, initialUser, initialDrop, onClose }: { connId: st
                     </Button>
                   )}
                   <span className="ml-auto text-[12.5px] text-muted">{dirty ? `${statements.length} change${statements.length === 1 ? "" : "s"}` : "No changes"}</span>
-                  <Button disabled={!dirty} onClick={() => setDraft(original ? clone(original) : newDraft(kind))}>
+                  <Button
+                    disabled={!dirty}
+                    onClick={() => {
+                      setDraft(original ? clone(original) : newDraft(kind));
+                      setStash({});
+                      setAllTarget({ db: null, preset: null });
+                    }}
+                  >
                     <RotateCcw size={14} /> Revert
                   </Button>
-                  <Button variant="primary" disabled={!dirty || !nameOk} onClick={() => setReview(statements)}>
+                  <Button variant="primary" disabled={!dirty || !nameOk} onClick={() => setReview(groups)}>
                     <Check size={15} /> {original ? "Review & apply" : "Review & create"}
                   </Button>
                 </footer>
@@ -311,11 +451,14 @@ function UsersDialog({ connId, initialUser, initialDrop, onClose }: { connId: st
             title={original ? "Apply changes" : "Create user"}
             kind={kind}
             production={isProduction(cfg)}
-            statements={review}
+            groups={review}
+            perDatabase={multi}
             onClose={() => setReview(null)}
             onApply={async () => {
-              await applyStatements(connId, kind, review, dbName);
+              await apply(review);
               setReview(null);
+              setStash({});
+              setAllTarget({ db: null, preset: null });
               changed();
               await reload(accountKey(draft.account));
             }}
@@ -329,7 +472,15 @@ function UsersDialog({ connId, initialUser, initialDrop, onClose }: { connId: st
             currentUser={conn?.info?.user ?? ""}
             onClose={() => setDropping(false)}
             onDrop={async (reassign) => {
-              await applyStatements(connId, kind, dropSql(kind, original.account, reassign), dbName);
+              const stmts = dropSql(kind, original.account, reassign);
+              if (multi && reassign) {
+                // REASSIGN/DROP OWNED only reach the current database: run them in every one
+                const owned = stmts.filter((x) => !x.sql.startsWith("DROP ROLE")).map((x) => x.sql).join(";\n");
+                const res = await api.queryDatabases(server, connectable, owned);
+                const failed = res.filter((r) => r.error);
+                if (failed.length) throw new Error(failed.map((r) => `${r.database}: ${r.error}`).join("\n"));
+                await applyStatements(server, kind, stmts.filter((x) => x.sql.startsWith("DROP ROLE")), serverDb);
+              } else await applyStatements(privConn, kind, stmts, dbName);
               setDropping(false);
               setSelected(null);
               setDraft(null);
@@ -523,9 +674,19 @@ function PgAccountForm({ draft, setDraft, isNew, roles }: { draft: Draft; setDra
 }
 
 
-function ScopeList({ items, value, onChange }: { items: { key: string; label: string; sub?: string; count: number }[]; value: string; onChange: (k: string) => void }) {
+function ScopeList({
+  items,
+  value,
+  onChange,
+  className = "w-[210px] shrink-0",
+}: {
+  items: { key: string; label: string; sub?: string; count: number }[];
+  value: string;
+  onChange: (k: string) => void;
+  className?: string;
+}) {
   return (
-    <div className="flex w-[210px] shrink-0 flex-col gap-0.5">
+    <div className={cx("flex flex-col gap-0.5", className)}>
       {items.map((it) => (
         <button
           key={it.key}
@@ -682,6 +843,194 @@ function MyPrivileges({ draft, setDraft, databases, infos }: { draft: Draft; set
   );
 }
 
+/** Settings for every database of the server at once. */
+function AllDatabases({
+  target,
+  setTarget,
+  overview,
+  superuser,
+}: {
+  target: PgAllTarget;
+  setTarget: React.Dispatch<React.SetStateAction<PgAllTarget>>;
+  overview: PgDbAccess[] | null;
+  superuser: boolean;
+}) {
+  if (!overview) {
+    return (
+      <div className="flex justify-center py-10">
+        <Spinner />
+      </div>
+    );
+  }
+  const dbs = overview.filter((a) => !a.error);
+  const schemas = dbs.reduce((n, a) => n + a.schemas.length, 0);
+  const field = { CONNECT: "connect", CREATE: "create", TEMPORARY: "temp" } as const;
+  const held = (priv: string) => dbs.filter((a) => a[field[priv as keyof typeof field]]).length;
+  const state = (priv: string): boolean | "some" => {
+    if (target.db) return target.db.includes(priv);
+    const n = held(priv);
+    return n === 0 ? false : n === dbs.length ? true : "some";
+  };
+  const toggle = (priv: string) => {
+    const cur = target.db ?? PG_DB_PRIVS.map((p) => p.key).filter((p) => state(p) === true);
+    setTarget({ ...target, db: cur.includes(priv) ? cur.filter((x) => x !== priv) : [...cur, priv] });
+  };
+  const preset = PRESETS.find((p) => p.key === target.preset);
+
+  return (
+    <div className="space-y-5">
+      <p className="text-[12.5px] leading-snug text-fg-2">
+        Sets the same access in all {dbs.length} databases of this server. It replaces what the user has there; the review shows every statement before anything runs.
+      </p>
+      {superuser && (
+        <p className="flex items-start gap-1.5 rounded-lg bg-err/10 px-3 py-2 text-[12px] text-fg-2">
+          <TriangleAlert size={14} className="mt-px shrink-0 text-err" /> This role is a superuser: it can do everything regardless of these settings.
+        </p>
+      )}
+      <PrivSection title="Every database">
+        {PG_DB_PRIVS.map((d) => {
+          const st = state(d.key);
+          return <PrivCheck key={d.key} def={d} state={st} extra={st === "some" && !target.db ? `${held(d.key)} of ${dbs.length} databases` : undefined} onToggle={() => toggle(d.key)} />;
+        })}
+      </PrivSection>
+      <div className="space-y-2">
+        <h4 className="text-[11px] font-semibold uppercase tracking-wider text-muted">
+          Every schema ({schemas} in {dbs.length} databases)
+        </h4>
+        <PresetBar onPick={(p) => setTarget({ ...target, preset: p })} />
+        {preset && (
+          <p className="flex items-start gap-1.5 rounded-lg bg-accent-soft px-3 py-2 text-[12px] text-fg-2">
+            <Check size={14} className="mt-px shrink-0 text-accent" />
+            <span>
+              <b className="font-medium text-fg">{preset.label}</b> in every schema: its tables and sequences, and those created later.{" "}
+              <button className="text-accent hover:underline" onClick={() => setTarget({ ...target, preset: null })}>
+                Undo
+              </button>
+            </span>
+          </p>
+        )}
+      </div>
+      {(target.db || target.preset) && (
+        <p className="text-[11.5px] text-muted">Per-database changes made in the list on the left run after these.</p>
+      )}
+    </div>
+  );
+}
+
+interface DbNav {
+  databases: string[];
+  current: string;
+  /** Panel for the "All databases" entry */
+  all: React.ReactNode;
+  onSwitch: (db: string) => void;
+  /** null while loading */
+  overview: PgDbAccess[] | null;
+  /** Databases with unsaved privilege changes */
+  edited: Set<string>;
+  error: string | null;
+  isNew: boolean;
+}
+
+const hasAccess = (a: PgDbAccess) => a.owner || (a.connect && a.schemas.some((s) => s.usage || s.owner));
+
+/** One line about what the role can do in a database. */
+function databaseSummary(a: PgDbAccess | undefined, superuser: boolean, loading: boolean): string {
+  if (superuser) return "superuser: everything";
+  if (!a) return loading ? "checking…" : "";
+  if (a.error) return "can't check this database";
+  if (a.owner) return "owner";
+  if (!a.connect) return "no access";
+  const usable = a.schemas.filter((s) => s.usage || s.owner);
+  if (!usable.length) return "connect only";
+  const read = usable.reduce((n, s) => n + s.read, 0);
+  const write = usable.reduce((n, s) => n + s.write, 0);
+  const total = usable.reduce((n, s) => n + s.tables, 0);
+  const what = write ? `write ${write}/${total} tables` : read ? `read ${read}/${total} tables` : "no tables";
+  return `${usable.length} schema${usable.length === 1 ? "" : "s"} · ${what}`;
+}
+
+/** One line about a schema: effective access, including PUBLIC and memberships. */
+function schemaSummary(s: PgDbAccess["schemas"][number] | undefined): string {
+  if (!s) return "schema";
+  if (!s.usage) return "no access";
+  if (s.write) return `write ${s.write}/${s.tables} tables`;
+  if (s.read) return `read ${s.read}/${s.tables} tables`;
+  return s.create ? "usage, create" : "usage only";
+}
+
+/** Databases of the server: "All databases", then those the role can use, then the rest. */
+function DatabaseList({ nav, scopes, superuser }: { nav: DbNav; scopes: React.ReactNode; superuser: boolean }) {
+  const [filter, setFilter] = useState("");
+  const known = !!nav.overview && !nav.isNew && !superuser;
+  const access = (db: string) => {
+    const a = nav.overview?.find((x) => x.database === db);
+    return !!a && hasAccess(a);
+  };
+  const shown = nav.databases.filter((d) => d.toLowerCase().includes(filter.toLowerCase()));
+  const sections: [string, string[]][] = known
+    ? [
+        ["With access", shown.filter(access)],
+        ["No access", shown.filter((d) => !access(d))],
+      ]
+    : [["Databases", shown]];
+
+  const row = (db: string) => {
+    const current = db === nav.current;
+    const a = nav.overview?.find((x) => x.database === db);
+    const summary = nav.isNew ? "" : databaseSummary(a, superuser, !nav.overview);
+    return (
+      <div key={db}>
+        <button
+          onClick={() => nav.onSwitch(db)}
+          className={cx("flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-left", current ? "bg-hover" : "hover:bg-hover")}
+        >
+          <Database size={14} className={cx("shrink-0", a && hasAccess(a) ? "text-pg" : "text-muted")} />
+          <span className="min-w-0 flex-1">
+            <span className={cx("block truncate text-[13px]", current ? "font-medium text-fg" : "text-fg-2")}>{db}</span>
+            {summary && <span className="block truncate text-[11px] text-muted">{summary}</span>}
+          </span>
+          {nav.edited.has(db) && <span className="h-2 w-2 shrink-0 rounded-full bg-accent" title="Unsaved changes" />}
+        </button>
+        {current && <div className="mb-1 ml-4 mt-0.5 border-l border-line pl-2">{nav.error ? <p className="px-2.5 py-2 text-[12px] text-err">{nav.error}</p> : scopes}</div>}
+      </div>
+    );
+  };
+
+  return (
+    <div className="flex w-[250px] shrink-0 flex-col gap-0.5">
+      <button
+        onClick={() => nav.onSwitch("*")}
+        className={cx("mb-1 flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left", nav.current === "*" ? "bg-accent-soft" : "hover:bg-hover")}
+      >
+        <Layers size={14} className="shrink-0 text-accent" />
+        <span className="min-w-0 flex-1">
+          <span className="block truncate text-[13px] font-medium text-fg">All databases</span>
+          <span className="block truncate text-[11px] text-muted">same access everywhere</span>
+        </span>
+        {nav.edited.has("*") && <span className="h-2 w-2 shrink-0 rounded-full bg-accent" title="Unsaved changes" />}
+      </button>
+      {nav.databases.length > 8 && (
+        <div className="relative mb-1">
+          <Search size={13} className="absolute left-2.5 top-2.5 text-muted" />
+          <input value={filter} onChange={(e) => setFilter(e.target.value)} placeholder="Filter databases…" className={cx(input, "pl-7")} />
+        </div>
+      )}
+      {sections.map(
+        ([title, dbs]) =>
+          dbs.length > 0 && (
+            <div key={title} className="flex flex-col gap-0.5">
+              <div className="px-2.5 pb-0.5 pt-2 text-[11px] font-semibold uppercase tracking-wider text-muted">
+                {title} <span className="font-normal">{dbs.length}</span>
+              </div>
+              {dbs.map(row)}
+            </div>
+          ),
+      )}
+      {shown.length === 0 && <p className="px-2.5 py-2 text-[12px] text-muted">No databases match.</p>}
+    </div>
+  );
+}
+
 function PgPrivileges({
   draft,
   setDraft,
@@ -689,6 +1038,7 @@ function PgPrivileges({
   schemas,
   infos,
   dbName,
+  nav,
 }: {
   draft: Draft;
   setDraft: SetDraft;
@@ -696,8 +1046,12 @@ function PgPrivileges({
   schemas: string[];
   infos: SchemaInfo[];
   dbName: string;
+  /** Server connection: every database, with the role's access in each */
+  nav?: DbNav;
 }) {
   const [scope, setScope] = useState("db");
+  // another database has other schemas
+  useEffect(() => setScope("db"), [dbName]);
   const [part, setPart] = useState<"all" | "objects">("all");
   const p = draft.privileges;
   const objCount = (s: string) => Object.keys(p.objectGrants).filter((k) => k.startsWith(`${s}\u0001`) && p.objectGrants[k].length).length;
@@ -718,174 +1072,214 @@ function PgPrivileges({
           },
         },
     );
-  const target = (kind: "tables" | "sequences") => draft.objectTargets[`${kind}:${schema}`] ?? currentObjectPrivs(base.objects[`${kind}:${schema}`], kind);
+  // a schema without tables (yet) only has default privileges for tables created later
+  const isEmpty = (kind: "tables" | "sequences") => (base.objects[`${kind}:${schema}`]?.total ?? 0) === 0;
+  const target = (kind: "tables" | "sequences") =>
+    draft.objectTargets[`${kind}:${schema}`] ??
+    (isEmpty(kind) ? (base.defaultPrivs[`${kind}:${schema}`] ?? []) : currentObjectPrivs(base.objects[`${kind}:${schema}`], kind));
   const setTarget = (kind: "tables" | "sequences", list: string[]) =>
     setDraft(
       (d) =>
         d && {
           ...d,
           objectTargets: { ...d.objectTargets, [`${kind}:${schema}`]: list },
+          // nothing to grant on yet: the choice only lives on as default privileges
+          privileges:
+            isEmpty(kind) && list.length && schema && !d.privileges.futureTables.includes(schema)
+              ? { ...d.privileges, futureTables: [...d.privileges.futureTables, schema] }
+              : d.privileges,
         },
     );
   const objState = (kind: "tables" | "sequences", priv: string): boolean | "some" => {
     const key = `${kind}:${schema}`;
     if (draft.objectTargets[key]) return draft.objectTargets[key].includes(priv);
+    if (isEmpty(kind)) return (base.defaultPrivs[key] ?? []).includes(priv);
     const st = objectState(base.objects[key], priv);
     return st === "all" ? true : st === "some" ? "some" : false;
   };
   const count = (s: string) =>
     (p.granted[`schema:${s}`] ?? []).length + (draft.objectTargets[`tables:${s}`] ?? currentObjectPrivs(base.objects[`tables:${s}`], "tables")).length + objCount(s);
 
+  const access = nav?.overview?.find((a) => a.database === dbName);
+  const scopes = (
+    <ScopeList
+      value={scope}
+      onChange={setScope}
+      className={nav ? "w-full" : undefined}
+      items={[
+        {
+          key: "db",
+          label: nav ? "Database-wide" : `Database ${dbName}`,
+          sub: "connect, create schemas",
+          count: (p.granted.db ?? []).length,
+        },
+        ...schemas.map((s) => ({
+          key: `schema:${s}`,
+          label: s,
+          sub: p.ownedSchemas.includes(s) ? "owner" : schemaSummary(access?.schemas.find((x) => x.name === s)),
+          count: count(s),
+        })),
+      ]}
+    />
+  );
+
   return (
     <div className="flex gap-5">
-      <ScopeList
-        value={scope}
-        onChange={setScope}
-        items={[
-          {
-            key: "db",
-            label: `Database ${dbName}`,
-            sub: "connect, create schemas",
-            count: (p.granted.db ?? []).length,
-          },
-          ...schemas.map((s) => ({
-            key: `schema:${s}`,
-            label: s,
-            sub: p.ownedSchemas.includes(s) ? "owner" : "schema",
-            count: count(s),
-          })),
-        ]}
-      />
+      {nav ? <DatabaseList nav={nav} scopes={scopes} superuser={superuser} /> : scopes}
       <div className="min-w-0 flex-1 space-y-4">
-        {superuser && (
-          <p className="flex items-start gap-1.5 rounded-lg bg-err/10 px-3 py-2 text-[12px] text-fg-2">
-            <TriangleAlert size={14} className="mt-px shrink-0 text-err" /> This role is a superuser: it can do everything regardless of these settings.
-          </p>
-        )}
-        {scope === "db" ? (
-          <div className="grid grid-cols-3 gap-x-2">
-            {PG_DB_PRIVS.map((d) => {
-              const cur = p.granted.db ?? [];
-              return (
-                <PrivCheck
-                  key={d.key}
-                  def={d}
-                  state={cur.includes(d.key)}
-                  onToggle={() => setGranted("db", cur.includes(d.key) ? cur.filter((x) => x !== d.key) : [...cur, d.key])}
-                />
-              );
-            })}
-            <p className="col-span-3 mt-2 text-[11.5px] leading-snug text-muted">
-              By default every role can connect and use temporary tables through PUBLIC; these checkboxes are the role&apos;s own grants.
-            </p>
-          </div>
+        {nav?.current === "*" ? (
+          <>
+            <div className="flex items-center gap-1.5 text-[12.5px] font-medium text-fg">
+              <Layers size={13} className="text-pg" /> All databases
+            </div>
+            {nav.all}
+          </>
         ) : (
-          schema && (
-            <>
-              <PartSwitch value={part} onChange={setPart} wide="Schema & all tables" objects={objCount(schema)} />
-              {owned && (
-                <p className="flex items-start gap-1.5 rounded-lg bg-accent-soft px-3 py-2 text-[12px] text-fg-2">
-                  <KeyRound size={14} className="mt-px shrink-0 text-accent" /> This role owns the schema, so it already has every privilege on it.
+          <>
+            {nav && (
+              <div className="flex items-center gap-1.5 text-[12.5px] text-muted">
+                <Database size={13} className="text-pg" />
+                <span className="font-medium text-fg">{dbName}</span>
+                <span>›</span>
+                <span className="text-fg-2">{schema ?? "database-wide"}</span>
+              </div>
+            )}
+            {superuser && (
+              <p className="flex items-start gap-1.5 rounded-lg bg-err/10 px-3 py-2 text-[12px] text-fg-2">
+                <TriangleAlert size={14} className="mt-px shrink-0 text-err" /> This role is a superuser: it can do everything regardless of these settings.
+              </p>
+            )}
+            {scope === "db" ? (
+              <div className="grid grid-cols-3 gap-x-2">
+                {PG_DB_PRIVS.map((d) => {
+                  const cur = p.granted.db ?? [];
+                  return (
+                    <PrivCheck
+                      key={d.key}
+                      def={d}
+                      state={cur.includes(d.key)}
+                      onToggle={() => setGranted("db", cur.includes(d.key) ? cur.filter((x) => x !== d.key) : [...cur, d.key])}
+                    />
+                  );
+                })}
+                <p className="col-span-3 mt-2 text-[11.5px] leading-snug text-muted">
+                  By default every role can connect and use temporary tables through PUBLIC; these checkboxes are the role&apos;s own grants.
                 </p>
-              )}
-              {part === "objects" ? (
-                <ObjectsMatrix
-                  scope={schema}
-                  info={infos.find((i) => i.name === schema)}
-                  draft={draft}
-                  setDraft={setDraft}
-                  inherited={(name, priv) =>
-                    owned || p.ownedObjects.includes(objKey(schema, name)) ? "as owner" : objState("tables", priv) === true ? "through “All tables”" : null
-                  }
-                  onGrant={() => {
-                    // without USAGE the role sees nothing in the schema
-                    const cur = p.granted[`schema:${schema}`] ?? [];
-                    if (!owned && !cur.includes("USAGE")) setGranted(`schema:${schema}`, [...cur, "USAGE"]);
-                  }}
-                />
-              ) : (
+              </div>
+            ) : (
+              schema && (
                 <>
-                  <PresetBar
-                    onPick={(pr) => {
-                      const [sch, tab, seq] = pgPreset(pr);
-                      setDraft(
-                        (d) =>
-                          d && {
-                            ...d,
-                            privileges: {
-                              ...d.privileges,
-                              granted: {
-                                ...d.privileges.granted,
-                                [`schema:${schema}`]: sch,
+                  <PartSwitch value={part} onChange={setPart} wide="Schema & all tables" objects={objCount(schema)} />
+                  {owned && (
+                    <p className="flex items-start gap-1.5 rounded-lg bg-accent-soft px-3 py-2 text-[12px] text-fg-2">
+                      <KeyRound size={14} className="mt-px shrink-0 text-accent" /> This role owns the schema, so it already has every privilege on it.
+                    </p>
+                  )}
+                  {part === "objects" ? (
+                    <ObjectsMatrix
+                      scope={schema}
+                      info={infos.find((i) => i.name === schema)}
+                      draft={draft}
+                      setDraft={setDraft}
+                      inherited={(name, priv) =>
+                        owned || p.ownedObjects.includes(objKey(schema, name)) ? "as owner" : objState("tables", priv) === true ? "through “All tables”" : null
+                      }
+                      onGrant={() => {
+                        // without USAGE the role sees nothing in the schema
+                        const cur = p.granted[`schema:${schema}`] ?? [];
+                        if (!owned && !cur.includes("USAGE")) setGranted(`schema:${schema}`, [...cur, "USAGE"]);
+                      }}
+                    />
+                  ) : (
+                    <>
+                      <PresetBar
+                        onPick={(pr) => {
+                          const [sch, tab, seq] = pgPreset(pr);
+                          setDraft(
+                            (d) =>
+                              d && {
+                                ...d,
+                                privileges: {
+                                  ...d.privileges,
+                                  granted: {
+                                    ...d.privileges.granted,
+                                    [`schema:${schema}`]: sch,
+                                  },
+                                  // empty schema: keep the preset for tables created later
+                                  futureTables:
+                                    isEmpty("tables") && pr !== "none" && !d.privileges.futureTables.includes(schema)
+                                      ? [...d.privileges.futureTables, schema]
+                                      : d.privileges.futureTables,
+                                },
+                                objectTargets: {
+                                  ...d.objectTargets,
+                                  [`tables:${schema}`]: tab,
+                                  [`sequences:${schema}`]: seq,
+                                },
                               },
-                            },
-                            objectTargets: {
-                              ...d.objectTargets,
-                              [`tables:${schema}`]: tab,
-                              [`sequences:${schema}`]: seq,
-                            },
-                          },
-                      );
-                    }}
-                  />
-                  <PrivSection title="Schema">
-                    {PG_SCHEMA_PRIVS.map((d) => {
-                      const cur = p.granted[`schema:${schema}`] ?? [];
-                      return (
-                        <PrivCheck
-                          key={d.key}
-                          def={d}
-                          state={cur.includes(d.key)}
-                          onToggle={() => setGranted(`schema:${schema}`, cur.includes(d.key) ? cur.filter((x) => x !== d.key) : [...cur, d.key])}
-                        />
-                      );
-                    })}
-                  </PrivSection>
-                  {(["tables", "sequences"] as const).map((kind) => {
-                    const objs = base.objects[`${kind}:${schema}`];
-                    const defs = kind === "tables" ? PG_TABLE_PRIVS : PG_SEQ_PRIVS;
-                    return (
-                      <PrivSection key={kind} title={`All ${kind} (${objs?.total ?? 0})`}>
-                        {defs.map((d) => {
-                          const st = objState(kind, d.key);
-                          const n = (objs?.counts[d.key] ?? 0) + (objs?.owned ?? 0);
+                          );
+                        }}
+                      />
+                      <PrivSection title="Schema">
+                        {PG_SCHEMA_PRIVS.map((d) => {
+                          const cur = p.granted[`schema:${schema}`] ?? [];
                           return (
                             <PrivCheck
                               key={d.key}
                               def={d}
-                              state={st}
-                              extra={st === "some" && !draft.objectTargets[`${kind}:${schema}`] ? `${n} of ${objs?.total} ${kind}` : undefined}
-                              onToggle={() => {
-                                const cur = target(kind);
-                                setTarget(kind, st === true ? cur.filter((x) => x !== d.key) : [...cur.filter((x) => x !== d.key), d.key]);
-                              }}
+                              state={cur.includes(d.key)}
+                              onToggle={() => setGranted(`schema:${schema}`, cur.includes(d.key) ? cur.filter((x) => x !== d.key) : [...cur, d.key])}
                             />
                           );
                         })}
                       </PrivSection>
-                    );
-                  })}
-                  <Toggle
-                    checked={p.futureTables.includes(schema)}
-                    onChange={(v) =>
-                      setDraft(
-                        (d) =>
-                          d && {
-                            ...d,
-                            privileges: {
-                              ...d.privileges,
-                              futureTables: v ? [...d.privileges.futureTables, schema] : d.privileges.futureTables.filter((x) => x !== schema),
-                            },
-                          },
-                      )
-                    }
-                    label="Also for tables and sequences created later"
-                    hint="Adds default privileges, so new tables you create in this schema get the same access."
-                  />
+                      {(["tables", "sequences"] as const).map((kind) => {
+                        const objs = base.objects[`${kind}:${schema}`];
+                        const defs = kind === "tables" ? PG_TABLE_PRIVS : PG_SEQ_PRIVS;
+                        return (
+                          <PrivSection key={kind} title={isEmpty(kind) ? `${kind[0].toUpperCase()}${kind.slice(1)} created later (none yet)` : `All ${kind} (${objs?.total ?? 0})`}>
+                            {defs.map((d) => {
+                              const st = objState(kind, d.key);
+                              const n = (objs?.counts[d.key] ?? 0) + (objs?.owned ?? 0);
+                              return (
+                                <PrivCheck
+                                  key={d.key}
+                                  def={d}
+                                  state={st}
+                                  extra={st === "some" && !draft.objectTargets[`${kind}:${schema}`] ? `${n} of ${objs?.total} ${kind}` : undefined}
+                                  onToggle={() => {
+                                    const cur = target(kind);
+                                    setTarget(kind, st === true ? cur.filter((x) => x !== d.key) : [...cur.filter((x) => x !== d.key), d.key]);
+                                  }}
+                                />
+                              );
+                            })}
+                          </PrivSection>
+                        );
+                      })}
+                      <Toggle
+                        checked={p.futureTables.includes(schema)}
+                        onChange={(v) =>
+                          setDraft(
+                            (d) =>
+                              d && {
+                                ...d,
+                                privileges: {
+                                  ...d.privileges,
+                                  futureTables: v ? [...d.privileges.futureTables, schema] : d.privileges.futureTables.filter((x) => x !== schema),
+                                },
+                              },
+                          )
+                        }
+                        label="Also for tables and sequences created later"
+                        hint="Adds default privileges, so new tables you create in this schema get the same access."
+                      />
+                    </>
+                  )}
                 </>
-              )}
-            </>
-          )
+              )
+            )}
+          </>
         )}
       </div>
     </div>
@@ -1044,17 +1438,22 @@ function ApplyDialog({
   title,
   kind,
   production,
-  statements,
+  groups,
+  perDatabase,
   onClose,
   onApply,
 }: {
   title: string;
   kind: DbKind;
   production: boolean;
-  statements: Stmt[];
+  groups: Group[];
+  /** PostgreSQL server: one transaction per database */
+  perDatabase?: boolean;
   onClose: () => void;
   onApply: () => Promise<void>;
 }) {
+  const statements = groups.flatMap((g) => g.stmts);
+  const headed = perDatabase && groups.length > 1;
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [ok, setOk] = useState(!production);
@@ -1081,10 +1480,19 @@ function ApplyDialog({
         )}
         <p className="text-[13px] text-fg-2">
           {statements.length} statement{statements.length === 1 ? "" : "s"}{" "}
-          {kind === "postgres" ? "will run in one transaction: all succeed or nothing changes." : "will run in order. MySQL applies account changes immediately, one by one."}
+          {kind !== "postgres"
+            ? "will run in order. MySQL applies account changes immediately, one by one."
+            : headed
+              ? `will run in ${groups.length} databases, in this order. Each database runs in one transaction: there, all succeed or nothing changes.`
+              : "will run in one transaction: all succeed or nothing changes."}
         </p>
         <pre className="selectable max-h-[45vh] overflow-auto whitespace-pre-wrap break-words rounded-md border border-line bg-bg/50 p-4 font-mono text-[12.5px] leading-relaxed text-fg">
-          {statements.map((s) => s.display).join(";\n") + ";"}
+          {groups.map((g, i) => (
+            <span key={g.db}>
+              {headed && <span className={cx("block text-muted", i > 0 && "mt-3")}>-- database {g.db}</span>}
+              {g.stmts.map((s) => s.display).join(";\n") + ";"}
+            </span>
+          ))}
         </pre>
         {error && <p className="selectable rounded-md bg-err/10 px-3 py-2 text-[13px] whitespace-pre-wrap text-err">{error}</p>}
         <div className="flex justify-end gap-2 border-t border-line pt-4">

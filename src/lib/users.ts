@@ -48,6 +48,8 @@ export interface Privileges {
   objects: Record<string, PgObjectPrivs>;
   /** PostgreSQL: schemas whose default privileges cover new tables */
   futureTables: string[];
+  /** PostgreSQL: default privileges for new objects, "tables:<schema>" / "sequences:<schema>" */
+  defaultPrivs: Record<string, string[]>;
   /** PostgreSQL: schemas owned by the role */
   ownedSchemas: string[];
   /** Per table/view grants: objKey(database or schema, name) -> privileges */
@@ -59,7 +61,17 @@ export interface Privileges {
   raw: string[];
 }
 
-export const emptyPrivileges = (): Privileges => ({ granted: {}, objects: {}, objectGrants: {}, ownedObjects: [], futureTables: [], ownedSchemas: [], other: [], raw: [] });
+export const emptyPrivileges = (): Privileges => ({
+  granted: {},
+  objects: {},
+  objectGrants: {},
+  ownedObjects: [],
+  futureTables: [],
+  defaultPrivs: {},
+  ownedSchemas: [],
+  other: [],
+  raw: [],
+});
 
 /** Database (MySQL) or schema (PostgreSQL) + table/view name. */
 export const objKey = (scope: string, name: string) => `${scope}\u0001${name}`;
@@ -306,8 +318,9 @@ export async function loadPgPrivileges(connId: string, role: string): Promise<Pr
     ),
     rows(
       connId,
-      `SELECT DISTINCT n.nspname FROM pg_default_acl d JOIN pg_namespace n ON n.oid = d.defaclnamespace, aclexplode(d.defaclacl) a
-        WHERE d.defaclobjtype = 'r' AND a.grantee = ${oid}`,
+      `SELECT n.nspname, CASE d.defaclobjtype WHEN 'S' THEN 'sequences' ELSE 'tables' END, a.privilege_type
+         FROM pg_default_acl d JOIN pg_namespace n ON n.oid = d.defaclnamespace, aclexplode(d.defaclacl) a
+        WHERE d.defaclobjtype IN ('r', 'S') AND a.grantee = ${oid}`,
     ),
     rows(
       connId,
@@ -331,8 +344,107 @@ export async function loadPgPrivileges(connId: string, role: string): Promise<Pr
     const o = (p.objects[`${kind}:${s}`] ??= { total: 0, owned: 0, counts: {} });
     o.counts[priv ?? ""] = Number(n);
   }
-  p.futureTables = defRows.map((x) => x[0] ?? "");
+  for (const [s, kind, priv] of defRows) (p.defaultPrivs[`${kind}:${s}`] ??= []).push(priv ?? "");
+  p.futureTables = [...new Set(defRows.filter((x) => x[1] === "tables").map((x) => x[0] ?? ""))];
   return p;
+}
+
+/** What a role can do in one database, counting PUBLIC, memberships and ownership. */
+export interface PgDbAccess {
+  database: string;
+  error: string | null;
+  connect: boolean;
+  create: boolean;
+  temp: boolean;
+  owner: boolean;
+  schemas: { name: string; usage: boolean; create: boolean; owner: boolean; tables: number; read: number; write: number }[];
+}
+
+/** Effective access of a role in every listed database of a server connection
+ * (role null: a role that doesn't exist yet, only the schemas are listed). */
+export async function loadPgOverview(serverId: string, role: string | null, databases: string[]): Promise<PgDbAccess[]> {
+  const r = pgLit(role ?? "");
+  // no role yet: every check is false
+  const has = (expr: string) => (role ? expr : "false");
+  const sql = `SELECT 'db', current_database(),
+         ${has(`has_database_privilege(${r}, current_database(), 'CONNECT')`)}::text,
+         ${has(`has_database_privilege(${r}, current_database(), 'CREATE')`)}::text,
+         ${has(`has_database_privilege(${r}, current_database(), 'TEMPORARY')`)}::text,
+         ${has(`(SELECT d.datdba = (SELECT oid FROM pg_roles WHERE rolname = ${r}) FROM pg_database d WHERE d.datname = current_database())`)}::text,
+         NULL, NULL, NULL
+  UNION ALL
+  SELECT 'schema', n.nspname,
+         ${has(`has_schema_privilege(${r}, n.oid, 'USAGE')`)}::text,
+         ${has(`has_schema_privilege(${r}, n.oid, 'CREATE')`)}::text,
+         NULL,
+         ${has(`(n.nspowner = (SELECT oid FROM pg_roles WHERE rolname = ${r}))`)}::text,
+         count(c.oid)::text,
+         (count(c.oid) FILTER (WHERE ${has(`has_table_privilege(${r}, c.oid, 'SELECT')`)}))::text,
+         (count(c.oid) FILTER (WHERE ${has(`has_table_privilege(${r}, c.oid, 'INSERT,UPDATE,DELETE')`)}))::text
+    FROM pg_namespace n
+    LEFT JOIN pg_class c ON c.relnamespace = n.oid AND c.relkind IN ('r','p','v','m','f') AND NOT c.relispartition
+   WHERE n.nspname !~ '^pg_' AND n.nspname <> 'information_schema'
+   GROUP BY n.oid, n.nspname, n.nspowner`;
+  const t = (v: string | null) => v === "t" || v === "true";
+  const out = await api.queryDatabases(serverId, databases, sql);
+  return out.map(({ database, rows, error }) => {
+    const db = rows.find((x) => x[0] === "db");
+    return {
+      database,
+      error,
+      connect: t(db?.[2] ?? null),
+      create: t(db?.[3] ?? null),
+      temp: t(db?.[4] ?? null),
+      owner: t(db?.[5] ?? null),
+      schemas: rows
+        .filter((x) => x[0] === "schema")
+        .map((x) => ({ name: x[1] ?? "", usage: t(x[2]), create: t(x[3]), owner: t(x[5]), tables: Number(x[6]), read: Number(x[7]), write: Number(x[8]) }))
+        .sort((a, b) => a.name.localeCompare(b.name)),
+    };
+  });
+}
+
+/** "All databases": exact database privileges and a preset for every schema, per database. */
+export interface PgAllTarget {
+  /** CONNECT / CREATE / TEMPORARY on every database; null = unchanged */
+  db: string[] | null;
+  /** Every schema in every database; null = unchanged */
+  preset: Preset | null;
+}
+
+export function buildPgAll(role: string, target: PgAllTarget, overview: PgDbAccess[]): { db: string; stmts: Stmt[] }[] {
+  const r = pgIdent(role);
+  return overview
+    .filter((a) => !a.error)
+    .map((a) => {
+      const out: Stmt[] = [];
+      if (target.db) {
+        const on = PG_DB_PRIVS.map((p) => p.key).filter((p) => target.db!.includes(p));
+        const off = PG_DB_PRIVS.map((p) => p.key).filter((p) => !target.db!.includes(p));
+        if (on.length) out.push(plain(`GRANT ${on.join(", ")} ON DATABASE ${pgIdent(a.database)} TO ${r}`));
+        if (off.length) out.push(plain(`REVOKE ${off.join(", ")} ON DATABASE ${pgIdent(a.database)} FROM ${r}`));
+      }
+      if (target.preset) {
+        const [sch, tab, seq] = pgPreset(target.preset);
+        for (const s of a.schemas) {
+          const n = pgIdent(s.name);
+          if (sch.length) out.push(plain(`GRANT ${sch.join(", ")} ON SCHEMA ${n} TO ${r}`));
+          for (const [word, privs] of [
+            ["TABLES", tab],
+            ["SEQUENCES", seq],
+          ] as const) {
+            out.push(plain(`REVOKE ALL ON ALL ${word} IN SCHEMA ${n} FROM ${r}`));
+            if (privs.length) out.push(plain(`GRANT ${privs.join(", ")} ON ALL ${word} IN SCHEMA ${n} TO ${r}`));
+            out.push(plain(`ALTER DEFAULT PRIVILEGES IN SCHEMA ${n} REVOKE ALL ON ${word} FROM ${r}`));
+            if (privs.length) out.push(plain(`ALTER DEFAULT PRIVILEGES IN SCHEMA ${n} GRANT ${privs.join(", ")} ON ${word} TO ${r}`));
+          }
+          const offSchema = PG_SCHEMA_PRIVS.map((p) => p.key).filter((p) => !sch.includes(p));
+          if (offSchema.length) out.push(plain(`REVOKE ${offSchema.join(", ")} ON SCHEMA ${n} FROM ${r}`));
+        }
+      }
+      return { db: a.database, stmts: out };
+    })
+    .filter((g) => g.stmts.length > 0);
 }
 
 /** Updatable views by objKey; views with GROUP BY, DISTINCT, aggregates, UNION etc. are read-only. */
@@ -468,6 +580,11 @@ function pgAttrs(r: PgRole, o: PgRole | undefined): string[] {
 }
 
 function buildPg(original: Draft | null, draft: Draft): Stmt[] {
+  return [...buildPgAccount(original, draft), ...buildPgPrivileges(original?.privileges ?? emptyPrivileges(), draft.privileges, draft.objectTargets, (draft.account as PgRole).name)];
+}
+
+/** CREATE/ALTER ROLE and memberships: once per server. */
+export function buildPgAccount(original: Draft | null, draft: Draft): Stmt[] {
   const out: Stmt[] = [];
   const r = draft.account as PgRole;
   const o = original?.account as PgRole | undefined;
@@ -490,9 +607,14 @@ function buildPg(original: Draft | null, draft: Draft): Stmt[] {
   const wasIn = new Set(o?.memberOf ?? []);
   for (const g of r.memberOf) if (!wasIn.has(g)) out.push(plain(`GRANT ${pgIdent(g)} TO ${name}`));
   for (const g of wasIn) if (!r.memberOf.includes(g)) out.push(plain(`REVOKE ${pgIdent(g)} FROM ${name}`));
+  return out;
+}
 
-  const before = original?.privileges ?? emptyPrivileges();
-  const after = draft.privileges;
+/** GRANT/REVOKE in one database (its connection runs them). */
+export function buildPgPrivileges(before: Privileges, after: Privileges, objectTargets: Record<string, string[]>, role: string): Stmt[] {
+  const out: Stmt[] = [];
+  const name = pgIdent(role);
+  const draft = { objectTargets };
   const diff = (was: string[], now: string[]) => [now.filter((x) => !was.includes(x)), was.filter((x) => !now.includes(x))];
 
   // database
@@ -508,22 +630,29 @@ function buildPg(original: Draft | null, draft: Draft): Stmt[] {
     if (m) schemas.add(m[1]);
   }
   for (const k of [...Object.keys(before.objectGrants), ...Object.keys(after.objectGrants)]) schemas.add(splitObjKey(k)[0]);
+  for (const s of [...before.futureTables, ...after.futureTables]) schemas.add(s);
   for (const s of schemas) {
     const sch = pgIdent(s);
     const [add, del] = diff(before.granted[`schema:${s}`] ?? [], after.granted[`schema:${s}`] ?? []);
     if (add.length) out.push(plain(`GRANT ${add.join(", ")} ON SCHEMA ${sch} TO ${name}`));
     for (const kind of ["tables", "sequences"] as const) {
-      const target = draft.objectTargets[`${kind}:${s}`];
-      if (!target) continue;
-      const objs = before.objects[`${kind}:${s}`];
+      const key = `${kind}:${s}`;
+      const target = draft.objectTargets[key];
+      const objs = before.objects[key];
       const word = kind === "tables" ? "TABLES" : "SEQUENCES";
-      const privs = kind === "tables" ? PG_TABLE_PRIVS : PG_SEQ_PRIVS;
-      const grant = privs.map((p) => p.key).filter((p) => target.includes(p) && objectState(objs, p) !== "all");
-      const revoke = privs.map((p) => p.key).filter((p) => !target.includes(p) && ["all", "some"].includes(objectState(objs, p)));
-      if (revoke.length) out.push(plain(`REVOKE ${revoke.join(", ")} ON ALL ${word} IN SCHEMA ${sch} FROM ${name}`));
-      if (grant.length) out.push(plain(`GRANT ${grant.join(", ")} ON ALL ${word} IN SCHEMA ${sch} TO ${name}`));
-      // for new tables/sequences created by the current user
+      const privs = (kind === "tables" ? PG_TABLE_PRIVS : PG_SEQ_PRIVS).map((p) => p.key);
+      if (target && (objs?.total ?? 0) > 0) {
+        const grant = privs.filter((p) => target.includes(p) && objectState(objs, p) !== "all");
+        const revoke = privs.filter((p) => !target.includes(p) && ["all", "some"].includes(objectState(objs, p)));
+        if (revoke.length) out.push(plain(`REVOKE ${revoke.join(", ")} ON ALL ${word} IN SCHEMA ${sch} FROM ${name}`));
+        if (grant.length) out.push(plain(`GRANT ${grant.join(", ")} ON ALL ${word} IN SCHEMA ${sch} TO ${name}`));
+      }
+      // objects created later (by the role that runs this): compared with the stored defaults
       if (after.futureTables.includes(s)) {
+        const want = target ?? ((objs?.total ?? 0) > 0 ? currentObjectPrivs(objs, kind) : (before.defaultPrivs[key] ?? []));
+        const had = before.defaultPrivs[key] ?? [];
+        const grant = privs.filter((p) => want.includes(p) && !had.includes(p));
+        const revoke = privs.filter((p) => !want.includes(p) && had.includes(p));
         if (grant.length) out.push(plain(`ALTER DEFAULT PRIVILEGES IN SCHEMA ${sch} GRANT ${grant.join(", ")} ON ${word} TO ${name}`));
         if (revoke.length) out.push(plain(`ALTER DEFAULT PRIVILEGES IN SCHEMA ${sch} REVOKE ${revoke.join(", ")} ON ${word} FROM ${name}`));
       }
@@ -545,15 +674,6 @@ function buildPg(original: Draft | null, draft: Draft): Stmt[] {
       if (add.length) out.push(plain(`GRANT ${add.join(", ")} ON ${on} TO ${name}`));
     }
     if (del.length) out.push(plain(`REVOKE ${del.join(", ")} ON SCHEMA ${sch} FROM ${name}`));
-    // "future tables" turned on alone: copy the current grants into default privileges
-    if (after.futureTables.includes(s) && !before.futureTables.includes(s)) {
-      for (const kind of ["tables", "sequences"] as const) {
-        const word = kind === "tables" ? "TABLES" : "SEQUENCES";
-        const cur = draft.objectTargets[`${kind}:${s}`] ?? currentObjectPrivs(before.objects[`${kind}:${s}`], kind);
-        const already = out.some((x) => x.sql.startsWith(`ALTER DEFAULT PRIVILEGES IN SCHEMA ${sch} GRANT`) && x.sql.includes(` ON ${word} `));
-        if (cur.length && !already) out.push(plain(`ALTER DEFAULT PRIVILEGES IN SCHEMA ${sch} GRANT ${cur.join(", ")} ON ${word} TO ${name}`));
-      }
-    }
     if (!after.futureTables.includes(s) && before.futureTables.includes(s)) {
       out.push(plain(`ALTER DEFAULT PRIVILEGES IN SCHEMA ${sch} REVOKE ALL ON TABLES FROM ${name}`));
       out.push(plain(`ALTER DEFAULT PRIVILEGES IN SCHEMA ${sch} REVOKE ALL ON SEQUENCES FROM ${name}`));

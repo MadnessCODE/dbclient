@@ -9,7 +9,7 @@ use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
 use futures_util::TryStreamExt;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use sqlx::mysql::{MySqlConnectOptions, MySqlPool, MySqlPoolOptions, MySqlRow, MySqlSslMode};
 use sqlx::postgres::{PgConnectOptions, PgPool, PgPoolOptions, PgRow, PgSslMode, PgValueFormat};
 use sqlx::{AssertSqlSafe, Column, Either, Row, TypeInfo, ValueRef};
@@ -590,6 +590,88 @@ pub async fn explain(pool: &DbPool, sql: &str, database: Option<&str>) -> AppRes
     })
 }
 
+
+/// Rows of one query in one database, or why it failed there.
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DatabaseRows {
+    pub database: String,
+    pub rows: Vec<Vec<Cell>>,
+    pub error: Option<String>,
+}
+
+/// Runs one query in each listed database of a PostgreSQL server, for overviews that
+/// span databases (catalogs such as pg_namespace are per database). Databases with an open
+/// pool use it; the others get one short-lived connection, so nothing stays open afterwards.
+pub async fn query_databases(server: &DbPool, open: HashMap<String, DbPool>, databases: Vec<String>, sql: &str) -> AppResult<Vec<DatabaseRows>> {
+    use futures_util::StreamExt;
+    use sqlx::{ConnectOptions, Connection};
+    let DbPool::Pg(p) = server else { return Err(msg("Only for PostgreSQL")) };
+    let base = (*p.connect_options()).clone();
+    let one = |db: String| {
+        let (base, open) = (base.clone(), &open);
+        async move {
+            let result: AppResult<Vec<Vec<Cell>>> = match open.get(&db) {
+                Some(pool) => pool.text_rows(sql).await,
+                None => async {
+                    let mut c = base.database(&db).connect().await?;
+                    let rows = sqlx::raw_sql(AssertSqlSafe(sql.to_owned())).fetch_all(&mut c).await?;
+                    let _ = c.close().await;
+                    Ok(rows.iter().map(|r| (0..r.len()).map(|i| pg_cell(r, i)).collect()).collect())
+                }
+                .await,
+            };
+            match result {
+                Ok(rows) => DatabaseRows { database: db, rows, error: None },
+                Err(e) => DatabaseRows { database: db, rows: Vec::new(), error: Some(e.to_string()) },
+            }
+        }
+    };
+    Ok(futures_util::stream::iter(databases.into_iter().map(one)).buffered(4).collect().await)
+}
+
+/// Statements for one database of a server.
+#[derive(Debug, Deserialize)]
+pub struct DatabaseBatch {
+    pub database: String,
+    pub statements: Vec<String>,
+}
+
+/// Runs batches database by database (PostgreSQL server), each in one transaction, and stops at
+/// the first failure. Databases without an open pool get a short-lived connection.
+pub async fn execute_in_databases(server: &DbPool, open: HashMap<String, DbPool>, batches: Vec<DatabaseBatch>) -> AppResult<()> {
+    use sqlx::{ConnectOptions, Connection};
+    let DbPool::Pg(p) = server else { return Err(msg("Only for PostgreSQL")) };
+    let base = (*p.connect_options()).clone();
+    let server_db = base.get_database().unwrap_or("postgres").to_owned();
+    let mut done: Vec<String> = Vec::new();
+    for b in batches {
+        let pool = open.get(&b.database).or((b.database == server_db).then_some(server));
+        let result = match pool {
+            Some(pool) => execute_batch(pool, &b.statements).await.map(|_| ()),
+            None => async {
+                let mut c = base.clone().database(&b.database).connect().await?;
+                let mut tx = c.begin().await?;
+                for (i, sql) in b.statements.iter().enumerate() {
+                    if let Err(e) = sqlx::raw_sql(AssertSqlSafe(sql.clone())).execute(&mut *tx).await {
+                        let short: String = sql.chars().take(160).collect();
+                        return Err(msg(format!("Statement {} failed, nothing was saved: {}\n\n{}", i + 1, crate::error::AppError::from(e), short)));
+                    }
+                }
+                tx.commit().await?;
+                let _ = c.close().await;
+                Ok(())
+            }
+            .await,
+        };
+        if let Err(e) = result {
+            let already = if done.is_empty() { String::new() } else { format!("\n\nAlready applied in: {}.", done.join(", ")) };
+            return Err(msg(format!("In database {}: {e}{already}", b.database)));
+        }
+        done.push(b.database);
+    }
+    Ok(())
+}
 
 /// Runs grid edits in one transaction (all or nothing); returns affected rows per statement.
 pub async fn execute_batch(pool: &DbPool, statements: &[String]) -> AppResult<Vec<u64>> {

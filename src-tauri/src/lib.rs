@@ -324,6 +324,28 @@ async fn cancel_query(running: State<'_, RunningQueries>, query_id: String) -> A
     running.cancel(&query_id).await
 }
 
+/// The same query in several databases of a PostgreSQL server connection.
+#[tauri::command]
+async fn query_databases(pools: State<'_, Pools>, id: String, databases: Vec<String>, sql: String) -> AppResult<Vec<db::DatabaseRows>> {
+    let (server, open) = {
+        let lives = pools.0.lock().unwrap();
+        let live = lives.get(&id).ok_or_else(|| msg("Not connected"))?;
+        (live.pool.clone(), live.databases.clone())
+    };
+    db::query_databases(&server, open, databases, &sql).await
+}
+
+/// Statement batches in several databases of a PostgreSQL server connection.
+#[tauri::command]
+async fn execute_in_databases(pools: State<'_, Pools>, id: String, batches: Vec<db::DatabaseBatch>) -> AppResult<()> {
+    let (server, open) = {
+        let lives = pools.0.lock().unwrap();
+        let live = lives.get(&id).ok_or_else(|| msg("Not connected"))?;
+        (live.pool.clone(), live.databases.clone())
+    };
+    db::execute_in_databases(&server, open, batches).await
+}
+
 #[tauri::command]
 async fn explain_query(pools: State<'_, Pools>, conn_id: String, sql: String, database: Option<String>) -> AppResult<String> {
     db::explain(&pools.get(&conn_id)?, &sql, database.as_deref()).await
@@ -465,6 +487,8 @@ pub fn run() {
             execute_batch,
             cancel_query,
             explain_query,
+            query_databases,
+            execute_in_databases,
             write_text_file,
             export_xlsx,
             import_dump,

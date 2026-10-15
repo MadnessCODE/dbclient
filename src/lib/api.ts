@@ -94,6 +94,12 @@ export interface DatabaseInfo {
   size: number | null;
 }
 
+export interface DatabaseRows {
+  database: string;
+  rows: Cell[][];
+  error: string | null;
+}
+
 export interface ServerInfo {
   database: string;
   user: string;
@@ -244,6 +250,10 @@ export const api = {
     invoke<QueryOutput>("run_query", { connId, queryId, sql, maxRows, database: database ?? null }),
   executeBatch: (connId: string, statements: string[]) => invoke<number[]>("execute_batch", { connId, statements }),
   cancelQuery: (queryId: string) => invoke<boolean>("cancel_query", { queryId }),
+  /** PostgreSQL server connection: the same query in each listed database */
+  queryDatabases: (id: string, databases: string[], sql: string) => invoke<DatabaseRows[]>("query_databases", { id, databases, sql }),
+  /** PostgreSQL server connection: statement batches per database, each in one transaction */
+  executeInDatabases: (id: string, batches: { database: string; statements: string[] }[]) => invoke<void>("execute_in_databases", { id, batches }),
   explainQuery: (connId: string, sql: string, database?: string) => invoke<string>("explain_query", { connId, sql, database: database ?? null }),
   writeTextFile: (path: string, contents: string) => invoke<void>("write_text_file", { path, contents }),
   exportXlsx: (path: string, columns: { name: string; kind: string }[], rows: Cell[][], options: { sheet: string; header: boolean; nullAs: string }) =>
