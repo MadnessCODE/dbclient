@@ -28,7 +28,7 @@ import { ask } from "@tauri-apps/plugin-dialog";
 import { api, errorText, kindLabel, type ConnectionConfig, type DbKind } from "./api";
 import { quoteIdent } from "./sql";
 import { useStore, type MenuEntry } from "../store";
-import { baseId, dbOf, isMultiDb } from "./connIds";
+import { baseId, dbOf, isMultiDb, subId } from "./connIds";
 import { isProduction } from "./connStyle";
 
 export type ObjectKind = "table" | "view" | "matview" | "function" | "procedure" | "trigger";
@@ -347,6 +347,7 @@ export function databaseMenu(cfg: ConnectionConfig): MenuEntry[] {
     { label: "Users & privileges…", icon: <UserCog />, disabled: !connected, onClick: () => st().setUi({ usersDialog: { connId: cfg.id } }) },
     "sep",
     { label: "Copy name", icon: <Copy />, onClick: () => copy(db) },
+    { label: "Rename database…", icon: <Pencil />, onClick: () => renameDatabase(cfg) },
     "sep",
     ...clearItems(cfg, cfg.id, db, () => (st().conn[cfg.id]?.schema?.schemas ?? []).filter((s) => !s.system).map((s) => s.name), "database", !connected),
     {
@@ -371,6 +372,45 @@ export function databaseMenu(cfg: ConnectionConfig): MenuEntry[] {
         }),
     },
   ];
+}
+
+/**
+ * PostgreSQL refuses to rename a database while anyone is connected to it, so the SQL first
+ * terminates those sessions (ALTER DATABASE then waits a few seconds for them to exit).
+ */
+function renameDatabase(cfg: ConnectionConfig) {
+  const server = baseId(cfg.id)!;
+  const db = dbOf(cfg.id)!;
+  const prod = isProduction(st().connections.find((c) => c.id === server));
+  const lit = `'${db.replace(/'/g, "''")}'`;
+  let renamedTo = "";
+  st().setUi({
+    actionDialog: {
+      title: `Rename database ${db}`,
+      connId: server,
+      danger: true,
+      confirmLabel: "Rename database",
+      message: `Every open connection to "${db}" will be terminated first, including other users and applications; their running queries and open transactions are rolled back. Connection settings that point to "${db}" by name stop working after the rename.`,
+      input: { label: "New name", value: db },
+      hideSql: true,
+      acknowledge: prod ?`I understand that all sessions on the production database "${db}" will be terminated.` : undefined,
+      buildSql: (n) => {
+        renamedTo = n;
+        return [
+          `SELECT pg_terminate_backend(pid)\n  FROM pg_stat_activity\n WHERE datname = ${lit} AND pid <> pg_backend_pid();`,
+          `ALTER DATABASE ${quoteIdent(db, "postgres")} RENAME TO ${quoteIdent(n, "postgres")};`,
+        ].join("\n");
+      },
+      beforeRun: () => st().disconnectFrom(cfg.id),
+      afterRun: () => {
+        // move open tabs over to the renamed database
+        const to = subId(server, renamedTo);
+        for (const t of st().tabs) if (t.connId === cfg.id) st().updateTab(t.id, { connId: to });
+        if (st().focus?.connId === cfg.id) st().setFocus(null);
+        void st().loadDatabases(server);
+      },
+    },
+  });
 }
 
 /** Always-quoted identifier (generated lists may contain reserved words). */

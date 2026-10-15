@@ -182,6 +182,10 @@ export interface ActionDialog {
   input?: { label: string; value: string };
   /** Text that must be typed to enable the button (DROP DATABASE) */
   requireInput?: string;
+  /** Checkbox that must be ticked to enable the button */
+  acknowledge?: string;
+  /** No editable SQL box; runs what buildSql returns */
+  hideSql?: boolean;
   /** SQL from the typed name */
   buildSql: (input: string) => string;
   /** e.g. close our own connections to a database before dropping it */

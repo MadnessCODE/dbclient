@@ -133,6 +133,7 @@ function ActionDialogView() {
   const [sqlEdited, setSqlEdited] = useState(false);
   const [running, setRunning] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [acked, setAcked] = useState(false);
 
   const changeInput = (v: string) => {
     setInput(v);
@@ -186,25 +187,33 @@ function ActionDialogView() {
             />
           </label>
         )}
-        <label className="block space-y-1.5">
-          <span className="text-[12px] text-muted">SQL (you can edit it)</span>
-          <textarea
-            value={sql}
-            onChange={(e) => {
-              setSql(e.target.value);
-              setSqlEdited(true);
-            }}
-            rows={Math.min(10, sql.split("\n").length + 1)}
-            spellCheck={false}
-            className="w-full resize-y rounded-md border border-line-strong bg-bg/50 p-3 font-mono text-[12.5px] text-fg outline-none focus:border-accent"
-          />
-        </label>
+        {!dlg.hideSql && (
+          <label className="block space-y-1.5">
+            <span className="text-[12px] text-muted">SQL (you can edit it)</span>
+            <textarea
+              value={sql}
+              onChange={(e) => {
+                setSql(e.target.value);
+                setSqlEdited(true);
+              }}
+              rows={Math.min(10, sql.split("\n").length + 1)}
+              spellCheck={false}
+              className="w-full resize-y rounded-md border border-line-strong bg-bg/50 p-3 font-mono text-[12.5px] text-fg outline-none focus:border-accent"
+            />
+          </label>
+        )}
+        {dlg.acknowledge && (
+          <label className="flex items-start gap-2 text-[13px] text-fg">
+            <input type="checkbox" checked={acked} onChange={(e) => setAcked(e.target.checked)} className="mt-0.5 accent-[var(--accent)]" />
+            {dlg.acknowledge}
+          </label>
+        )}
         {error && <p className="selectable rounded-md bg-err/10 px-3 py-2 text-[13px] text-err">{error}</p>}
         <div className="flex justify-end gap-2 border-t border-line pt-4">
           <Button type="button" variant="ghost" onClick={close}>
             Cancel
           </Button>
-          <Button type="submit" variant={dlg.danger ? "danger" : "primary"} disabled={running || !sql.trim() || (!!dlg.input && !input.trim()) || (dlg.requireInput !== undefined && input !== dlg.requireInput)}>
+          <Button type="submit" variant={dlg.danger ? "danger" : "primary"} disabled={running || !sql.trim() || (!!dlg.input && !input.trim()) || (dlg.requireInput !== undefined && input !== dlg.requireInput) || (!!dlg.acknowledge && !acked)}>
             {running && <Spinner />} {dlg.confirmLabel}
           </Button>
         </div>
