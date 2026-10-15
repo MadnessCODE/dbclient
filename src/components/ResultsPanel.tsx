@@ -1,11 +1,12 @@
 import { useEffect, useRef, useState } from "react";
-import { History, CircleAlert, CircleCheck, TableProperties, Download, Info, ListTree, Maximize2, Minimize2, MessageSquare, Sheet, Square } from "lucide-react";
+import { History, Star, CircleAlert, CircleCheck, TableProperties, Download, Info, ListTree, Maximize2, Minimize2, MessageSquare, Sheet, Square } from "lucide-react";
 import type { ResultSet } from "../lib/api";
 import { useActiveTab, useStore, type ResultTab, type TabRuntime } from "../store";
 import { Button, cx, IconButton, Spinner, MOD } from "./ui";
 import { StructurePanel } from "./StructurePanel";
 import { DataGrid } from "./DataGrid";
 import { HistoryView } from "./HistoryView";
+import { FavoritesView } from "./FavoritesView";
 import { baseId } from "../lib/connIds";
 
 export function ResultsPanel({ height }: { height?: number }) {
@@ -40,6 +41,12 @@ export function ResultsPanel({ height }: { height?: number }) {
           onClick={() => patchRuntime(tab.id, { resultTab: "history" })}
           icon={<History size={16} />}
           label="History"
+        />
+        <ResultTabButton
+          active={resultTab === "favorites"}
+          onClick={() => patchRuntime(tab.id, { resultTab: "favorites" })}
+          icon={<Star size={16} />}
+          label="Favorites"
         />
         <ResultTabButton active={resultTab === "explain"} onClick={() => patchRuntime(tab.id, { resultTab: "explain" })} icon={<ListTree size={16} />} label="Explain Plan" />
       </div>
@@ -93,6 +100,7 @@ export function ResultsPanel({ height }: { height?: number }) {
       {resultTab === "structure" && <StructurePanel tab={tab} />}
       {resultTab === "messages" && <Messages rt={rt} />}
       {resultTab === "history" && <HistoryView tab={tab} />}
+      {resultTab === "favorites" && <FavoritesView tab={tab} />}
       {resultTab === "explain" && (
         <div className="min-h-0 flex-1 overflow-auto p-4">
           {rt?.explaining ? (

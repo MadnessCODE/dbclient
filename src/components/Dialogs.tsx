@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Eye, History, Moon, Play, Settings, Sheet, Sun } from "lucide-react";
+import { Eye, History, Moon, Play, Settings, Sheet, Star, Sun } from "lucide-react";
 import { kindLabel } from "../lib/api";
 import { quoteIdent } from "../lib/sql";
 import { useStore } from "../store";
@@ -86,6 +86,16 @@ function Palette() {
       { key: "a:theme", icon: st.theme === "dark" ? <Sun size={15} className="text-muted" /> : <Moon size={15} className="text-muted" />, label: "Toggle theme", run: st.toggleTheme },
       { key: "a:settings", icon: <Settings size={15} className="text-muted" />, label: "Settings", run: () => st.setUi({ settingsOpen: true }) },
     );
+    for (const f of st.favorites) {
+      const cat = st.favoriteCategories.find((c) => c.id === f.categoryId)?.name;
+      items.push({
+        key: `f:${f.id}`,
+        icon: <Star size={15} className="text-warn" />,
+        label: f.name,
+        detail: cat ? `favorite · ${cat}` : "favorite",
+        run: () => st.newTab({ sql: f.sql, title: f.name }),
+      });
+    }
     for (const h of st.history.slice(0, 30)) {
       items.push({
         key: `h:${h.id}`,
@@ -130,7 +140,7 @@ function Palette() {
             else if (e.key === "Enter") choose(filtered[idx]);
             else if (e.key === "Escape") close();
           }}
-          placeholder="Search tables, columns, connections, history…"
+          placeholder="Search tables, columns, connections, favorites, history…"
           className="h-12 w-full border-b border-line bg-transparent px-4 text-[14px] text-fg outline-none placeholder:text-muted"
         />
         <ul ref={listRef} className="max-h-[50vh] overflow-y-auto p-1.5">

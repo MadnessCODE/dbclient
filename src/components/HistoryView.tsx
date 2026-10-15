@@ -1,9 +1,10 @@
 // History tab: all runs from this tab, newest first.
 import { useMemo, useState } from "react";
-import { CircleAlert, CircleCheck, Copy, Play, RotateCcw, Trash2 } from "lucide-react";
+import { CircleAlert, CircleCheck, Copy, Play, RotateCcw, Star, Trash2 } from "lucide-react";
 import { useStore, type EditorTab, type HistoryItem } from "../store";
 import { timeAgo } from "./LeftPanel";
 import { cx, IconButton, SearchInput } from "./ui";
+import { openAddFavorite } from "./FavoritesView";
 
 export function HistoryView({ tab }: { tab: EditorTab }) {
   const all = useStore((s) => s.history);
@@ -81,6 +82,9 @@ function HistoryRow({ item: h, tab }: { item: HistoryItem; tab: EditorTab }) {
           }}
         >
           <Copy size={14} />
+        </IconButton>
+        <IconButton title="Add to favorites" onClick={() => openAddFavorite(h.sql, h.connId)}>
+          <Star size={14} />
         </IconButton>
         <IconButton
           title="Remove from history"

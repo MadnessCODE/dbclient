@@ -1,4 +1,4 @@
-// App state (zustand). Tabs, history and settings persist between runs.
+// App state (zustand). Tabs, history, favorites and settings persist between runs.
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
 import { ask } from "@tauri-apps/plugin-dialog";
@@ -54,7 +54,7 @@ export interface Message {
   text: string;
 }
 
-export type ResultTab = "results" | "structure" | "messages" | "history" | "explain";
+export type ResultTab = "results" | "structure" | "messages" | "history" | "favorites" | "explain";
 
 export interface ServerSort {
   base: string;
@@ -92,6 +92,28 @@ export interface HistoryItem {
   ok: boolean;
   /** "100 rows", "3 rows affected" or the error */
   summary?: string;
+}
+
+/** Saved query; favorites are global, `connId` only records where it was saved from. */
+export interface FavoriteQuery {
+  id: string;
+  name: string;
+  sql: string;
+  /** null = Uncategorized */
+  categoryId: string | null;
+  connId?: string | null;
+  createdAt: number;
+  updatedAt: number;
+}
+
+export interface FavoriteCategory {
+  id: string;
+  name: string;
+}
+
+/** Add/edit favorite dialog; `favorite` with an id edits an existing one. */
+export interface FavoriteDialog {
+  favorite: Partial<FavoriteQuery> & { sql: string };
 }
 
 /** Queries at least this long mark the tab / send a system notification. */
@@ -202,6 +224,9 @@ interface State {
   untitledCounter: number;
 
   history: HistoryItem[];
+  favorites: FavoriteQuery[];
+  favoriteCategories: FavoriteCategory[];
+  favoriteDialog: FavoriteDialog | null;
   theme: "dark" | "light";
   settings: Settings;
 
@@ -266,13 +291,22 @@ interface State {
   explainTab: (id: string, sql: string) => Promise<void>;
   patchRuntime: (id: string, patch: Partial<TabRuntime>) => void;
 
+  // favorites
+  saveFavorite: (f: Partial<FavoriteQuery> & { name: string; sql: string }) => string;
+  removeFavorite: (id: string) => void;
+  moveFavorite: (id: string, categoryId: string | null) => void;
+  addFavoriteCategory: (name: string) => string;
+  renameFavoriteCategory: (id: string, name: string) => void;
+  /** Its favorites move to Uncategorized */
+  removeFavoriteCategory: (id: string) => void;
+
   // misc
   clearHistory: (tabId?: string) => void;
   toggleTheme: () => void;
   setSettings: (patch: Partial<Settings>) => void;
   setFocus: (focus: TreeFocus | null) => void;
   setUi: (
-    patch: Partial<Pick<State, "leftPanel" | "view" | "connDialog" | "projectDialog" | "paletteOpen" | "settingsOpen" | "aboutOpen" | "resultsMaximized" | "contextMenu" | "actionDialog" | "exportJob" | "importDialog" | "usersDialog" | "usersVersion" | "erDialog" | "dbExport" | "connImport">>,
+    patch: Partial<Pick<State, "leftPanel" | "view" | "connDialog" | "projectDialog" | "paletteOpen" | "settingsOpen" | "aboutOpen" | "resultsMaximized" | "contextMenu" | "actionDialog" | "exportJob" | "importDialog" | "usersDialog" | "usersVersion" | "erDialog" | "dbExport" | "connImport" | "favoriteDialog">>,
   ) => void;
   openContextMenu: (e: React.MouseEvent, items: MenuEntry[]) => void;
 }
@@ -316,6 +350,9 @@ export const useStore = create<State>()(
         runtime: {},
         untitledCounter: 0,
         history: [],
+        favorites: [],
+        favoriteCategories: [],
+        favoriteDialog: null,
         theme: "dark",
         settings: { maxRows: 10000, pageSize: 50, fontSize: 14 },
         leftPanel: "connections",
@@ -636,6 +673,35 @@ export const useStore = create<State>()(
           }
         },
 
+        saveFavorite: (f) => {
+          const now = Date.now();
+          const existing = f.id ? get().favorites.find((x) => x.id === f.id) : undefined;
+          if (existing) {
+            set((s) => ({ favorites: s.favorites.map((x) => (x.id === existing.id ? { ...x, ...f, updatedAt: now } : x)) }));
+            return existing.id;
+          }
+          const fav: FavoriteQuery = { categoryId: null, connId: null, ...f, id: uid(), createdAt: now, updatedAt: now };
+          set((s) => ({ favorites: [...s.favorites, fav] }));
+          return fav.id;
+        },
+        removeFavorite: (id) => set((s) => ({ favorites: s.favorites.filter((f) => f.id !== id) })),
+        moveFavorite: (id, categoryId) =>
+          set((s) => ({ favorites: s.favorites.map((f) => (f.id === id ? { ...f, categoryId, updatedAt: Date.now() } : f)) })),
+        addFavoriteCategory: (name) => {
+          const existing = get().favoriteCategories.find((c) => c.name.toLowerCase() === name.trim().toLowerCase());
+          if (existing) return existing.id;
+          const cat = { id: uid(), name: name.trim() };
+          set((s) => ({ favoriteCategories: [...s.favoriteCategories, cat] }));
+          return cat.id;
+        },
+        renameFavoriteCategory: (id, name) =>
+          set((s) => ({ favoriteCategories: s.favoriteCategories.map((c) => (c.id === id ? { ...c, name: name.trim() } : c)) })),
+        removeFavoriteCategory: (id) =>
+          set((s) => ({
+            favoriteCategories: s.favoriteCategories.filter((c) => c.id !== id),
+            favorites: s.favorites.map((f) => (f.categoryId === id ? { ...f, categoryId: null } : f)),
+          })),
+
         clearHistory: (tabId) => set((s) => ({ history: tabId ? s.history.filter((h) => h.tabId !== tabId) : [] })),
         toggleTheme: () => set((s) => ({ theme: s.theme === "dark" ? "light" : "dark" })),
         setSettings: (patch) => set((s) => ({ settings: { ...s.settings, ...patch } })),
@@ -656,6 +722,8 @@ export const useStore = create<State>()(
         activeTabId: s.activeTabId,
         untitledCounter: s.untitledCounter,
         history: s.history,
+        favorites: s.favorites,
+        favoriteCategories: s.favoriteCategories,
         theme: s.theme,
         settings: s.settings,
         selectedConnId: s.selectedConnId,

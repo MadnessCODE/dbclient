@@ -26,6 +26,7 @@ import {
   Save,
   SaveAll,
   Square,
+  Star,
   TriangleAlert,
   WandSparkles,
   X,
@@ -37,6 +38,8 @@ import { statementAt } from "../lib/sql";
 import { useActiveTab, useStore, type EditorTab, type MenuEntry } from "../store";
 import { Button, cx, DbIcon, EnvBadge, IconButton, Spinner, StatusDot, MOD } from "./ui";
 import { connColor, isProduction, tint } from "../lib/connStyle";
+import { setActiveEditor } from "../lib/editorBridge";
+import { openAddFavorite } from "./FavoritesView";
 import { baseId, dbOf, isMultiDb, subId } from "../lib/connIds";
 
 type MonacoEditor = MonacoApi.editor.IStandaloneCodeEditor;
@@ -222,6 +225,18 @@ function sqlToRun(editor: MonacoEditor | null, mode: "selection-or-all" | "state
   return model.getValue();
 }
 
+/** SQL to save as a favorite: the selection, the statement under the cursor, or everything. */
+function favoriteSql(editor: MonacoEditor | null, tab: EditorTab): string {
+  const model = editor?.getModel();
+  if (!editor || !model) return tab.sql;
+  const sel = editor.getSelection();
+  if (sel && !sel.isEmpty()) return model.getValueInRange(sel);
+  const kind = useStore.getState().connections.find((c) => c.id === baseId(tab.connId))?.kind ?? "postgres";
+  const pos = editor.getPosition();
+  const st = statementAt(model.getValue(), pos ? model.getOffsetAt(pos) : 0, kind);
+  return st?.text.trim() ? st.text : model.getValue();
+}
+
 async function saveTab(tab: EditorTab, saveAs = false) {
   let path = tab.filePath;
   if (!path || saveAs) {
@@ -305,6 +320,9 @@ function Toolbar({ tab, editorRef }: { tab: EditorTab; editorRef: React.RefObjec
       </Button>
 
       <div className="relative ml-auto flex items-center gap-1">
+        <IconButton title="Add to favorites (selection, current statement or everything)" onClick={() => openAddFavorite(favoriteSql(editorRef.current, tab), tab.connId)}>
+          <Star size={17} />
+        </IconButton>
         <IconButton title={`Save (${MOD}+S)`} onClick={() => void saveTab(tab)}>
           <Save size={17} />
         </IconButton>
@@ -453,7 +471,7 @@ export function MenuItem({ label, shortcut, onClick, disabled }: { label: string
 
 
 /** Right-click menu of the SQL editor, in the app's style. */
-function editorMenu(editor: MonacoEditor): MenuEntry[] {
+function editorMenu(editor: MonacoEditor, tab: EditorTab): MenuEntry[] {
   const model = editor.getModel();
   const sel = editor.getSelection();
   const hasSel = !!sel && !sel.isEmpty();
@@ -464,6 +482,14 @@ function editorMenu(editor: MonacoEditor): MenuEntry[] {
     { label: "Run all", icon: <ListVideo />, shortcut: `${MOD}+Shift+Enter`, onClick: action("run-all") },
     { label: "Explain", icon: <ListTree />, shortcut: `${MOD}+E`, onClick: action("explain-sql") },
     { label: hasSel ? "Format selection" : "Format SQL", icon: <WandSparkles />, shortcut: "Shift+Alt+F", onClick: action("format-sql") },
+    "sep",
+    {
+      label: "Add to favorites",
+      icon: <Star />,
+      hint: hasSel ? "Saves the selected SQL" : "Saves the statement under the cursor",
+      disabled: !model?.getValue().trim(),
+      onClick: () => openAddFavorite(favoriteSql(editor, tab), tab.connId),
+    },
     "sep",
     {
       label: "Cut",
@@ -521,8 +547,11 @@ function SqlEditor({ tab, editorRef }: { tab: EditorTab; editorRef: React.RefObj
     editor.addAction({ id: "run-all", label: "Run all", keybindings: [K.CtrlCmd | K.Shift | C.Enter, C.F5], run: () => void st().runTab(tabRef.current.id) });
     editor.addAction({ id: "format-sql", label: "Format SQL", keybindings: [K.Shift | K.Alt | C.KeyF], run: (ed) => formatEditor(ed as MonacoEditor, tabRef.current) });
     editor.addAction({ id: "save-sql", label: "Save", keybindings: [K.CtrlCmd | C.KeyS], run: () => void saveTab(st().tabs.find((t) => t.id === tabRef.current.id)!) });
+    editor.addAction({ id: "add-favorite", label: "Add to favorites", run: (ed) => openAddFavorite(favoriteSql(ed as MonacoEditor, tabRef.current), tabRef.current.connId) });
     editor.addAction({ id: "explain-sql", label: "Explain", keybindings: [K.CtrlCmd | C.KeyE], run: (ed) => void st().explainTab(tabRef.current.id, sqlToRun(ed as MonacoEditor, "statement", tabRef.current)) });
-    editor.onContextMenu((e) => st().openContextMenu(e.event.browserEvent as unknown as React.MouseEvent, editorMenu(editor)));
+    editor.onContextMenu((e) => st().openContextMenu(e.event.browserEvent as unknown as React.MouseEvent, editorMenu(editor, tabRef.current)));
+    editor.onDidDispose(() => setActiveEditor(null));
+    setActiveEditor(editor, () => tabRef.current.id);
     editor.focus();
   };
 

@@ -19,6 +19,7 @@ import { UsersDialogHost } from "./components/UsersDialog";
 import { ErDiagramHost } from "./components/ErDiagram";
 import { ExportDatabaseHost } from "./components/ExportDatabase";
 import { ImportConnectionsHost } from "./components/ImportConnections";
+import { FavoriteDialogHost } from "./components/FavoritesView";
 import { startUpdateChecks } from "./lib/updater";
 
 export default function App() {
@@ -100,6 +101,7 @@ export default function App() {
       <ErDiagramHost />
       <ExportDatabaseHost />
       <ImportConnectionsHost />
+      <FavoriteDialogHost />
       <ImportToasts />
       <ContextMenuHost />
     </div>
