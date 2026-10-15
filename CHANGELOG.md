@@ -12,6 +12,89 @@ How to write a section so it looks good on both:
   followed by numbered steps.
 - Smaller changes stay one bullet each.
 
+## 0.1.6
+
+> Table Doctor finds what slows a table down and fixes it with one click, for one table or the
+> whole database.
+
+### New
+
+#### Table Doctor
+Right-click a table and DB Client tells you what's wrong with it and how to fix it: a health
+score, the key numbers at a glance (rows, size, dead rows, sequential scans, last ANALYZE) and a
+list of findings sorted by severity. Each finding explains the problem in plain words, shows the
+numbers behind it and, where there is one, the fix as SQL you can read before you run it.
+
+It checks dead rows and autovacuum, tables read mostly by full scans, unused, duplicate and
+redundant indexes, foreign keys without an index, tables without a primary key, missing or
+old statistics, wasted space, money stored as a float, and on MySQL also fragmentation, MyISAM
+tables and join columns whose type or collation doesn't match. It only reads catalog and
+statistics views, so analyzing is safe on production.
+
+![Table Doctor for one table: score, key numbers and findings](https://madnesscode.github.io/dbclient/releases/0.1.6/table-doctor.png)
+
+**How to use it**
+1. Right-click a table in the tree and choose **Analyze table**.
+2. Click a finding to see the explanation, the evidence and the fix.
+3. Click the fix button (**Vacuum…**, **Create index…**, **Drop index…**, …). The SQL opens
+   for review; you can edit it. On a production connection you also tick a confirmation.
+4. The fix runs in the background (see **Tasks**), the table is analyzed again when it's done.
+   Long ones like `CREATE INDEX CONCURRENTLY` or `VACUUM` never block the app.
+5. Something you know about and want to keep? **Ignore** it: it leaves the score and the list
+   and waits under **Ignored** in case you change your mind.
+
+![Every fix is shown as SQL before it runs](https://madnesscode.github.io/dbclient/releases/0.1.6/table-doctor-fix.png)
+
+Below the findings: every index with its size and how often it's used (green used, amber rarely,
+red never), how the table's space splits into live rows, dead rows and free space, and
+**Column values**. Pick a column to see its NULL share, distinct values and most common values,
+and why an index on a column like `status` with a few values doesn't help most queries.
+
+![Index usage, table space and column values](https://madnesscode.github.io/dbclient/releases/0.1.6/table-doctor-columns.png)
+
+#### Health dots in the tree
+Tables with a problem get a dot in the schema tree: red for critical, amber for a warning.
+Hover it for the count, click it to open Table Doctor. The dots come from one quick read of the
+schema's statistics and refresh after a fix. Don't want them? **Settings → Table health dots**.
+
+![Red and amber dots next to tables with findings](https://madnesscode.github.io/dbclient/releases/0.1.6/tree-dots.png)
+
+#### Database Doctor
+The same checks for every table at once, with the biggest problems first: findings are ranked
+by severity and table size, so a critical issue on a 200 MB table comes before a warning on a
+small one. Filter by severity or table name, fix right from the list, or open a table's own
+Table Doctor.
+
+![Top issues across a whole database](https://madnesscode.github.io/dbclient/releases/0.1.6/database-doctor.png)
+
+**How to use it**
+1. Right-click a schema and choose **Analyze schema** (on MySQL: a database, **Analyze
+   database**). For all schemas of a PostgreSQL database, right-click the database or the
+   connection and choose **Analyze database**.
+2. The scan runs in the background with progress; you can keep working.
+3. Click a table name to open its Table Doctor, or use the fix buttons right there.
+
+### PostgreSQL
+- **Create database** dialog: template (or copy any database with its data), owner, encoding,
+  locale provider, collation, ICU locale, tablespace, connection limit and more, showing only
+  what your server version supports.
+- **Rename a database** from the tree. Open sessions are closed first (with a confirmation on
+  production) and your open tabs follow the new name.
+- **Users & privileges** on a server connection covers every database: see where a user has
+  access, edit privileges per database and apply them together.
+- Columns of extension types like `citext` and `hstore` show their type name instead of `?`.
+
+### MySQL
+- Each query tab has its own database, picked next to the connection. Tables opened from the
+  tree are written without the database prefix (`FROM orders`), and `USE db;` in the editor
+  switches the tab's database.
+
+### Changed
+- **Save** and **Save as…** moved from the editor toolbar to the tab's and the editor's
+  right-click menus; `Ctrl+S` still saves.
+- The Structure tab reads tables from the tab's own database on PostgreSQL server connections
+  and has a nicer table picker.
+
 ## 0.1.5
 
 > Save the queries you use every day, read Unix timestamps at a glance, and work in one schema

@@ -102,6 +102,19 @@ async function openContextMenuOnSelection(s) {
   return item;
 }
 
+/** Opens Table Doctor for public.orders and waits for its analysis. */
+async function openOrdersDoctor(s) {
+  await s.js(`
+    const { openDoctor, useDoctor } = await import("/src/lib/doctor.ts");
+    const { useStore } = await import("/src/store.ts");
+    openDoctor("demo-shop", "public", "orders");
+    for (let i = 0; i < 50 && !useDoctor.getState().byTab[useStore.getState().activeTabId]?.health; i++) await new Promise((r) => setTimeout(r, 100));`);
+  await s.sleep(500);
+}
+
+/** Main area (tab bar and the active tab). */
+const mainBox = (s) => s.rect("main");
+
 export const scenarios = {
   "0.1.5": [
     {
@@ -197,6 +210,85 @@ export const scenarios = {
         const menu = await s.rect("[data-context-menu]");
         const panel = await leftPanel(s);
         await s.shot("schema-menu", around([{ ...panel, height: menu.y + menu.height - panel.y }, menu], 0));
+      },
+    },
+  ],
+  "0.1.6": [
+    {
+      name: "table-doctor",
+      async run(s) {
+        await s.load(seed);
+        await openOrdersDoctor(s);
+        const main = await mainBox(s);
+        await s.shot("table-doctor", { ...main, height: 690 });
+      },
+    },
+    {
+      name: "table-doctor-fix",
+      async run(s) {
+        await s.load(seed);
+        await openOrdersDoctor(s);
+        const row = await s.rect("[role=button]", "Foreign key orders_customer_id_fkey");
+        await s.click(row.x + 200, row.y + row.height / 2);
+        await s.sleep(250);
+        const btn = await s.rect("button", "Create index…");
+        await s.click(btn.x + btn.width / 2, btn.y + btn.height / 2);
+        await s.sleep(400);
+        const modal = await s.rect("div.rounded-xl.shadow-2xl", "SQL (you can edit it)");
+        await s.shot("table-doctor-fix", around([modal], 28));
+      },
+    },
+    {
+      name: "table-doctor-columns",
+      async run(s) {
+        await s.load(seed);
+        await openOrdersDoctor(s);
+        await s.js(`[...document.querySelectorAll("section")].find((x) => x.textContent.includes("Column values")).scrollIntoView({ block: "end" });`);
+        await s.sleep(200);
+        const picker = await s.rect("section header button", "Pick a column");
+        await s.click(picker.x + picker.width / 2, picker.y + picker.height / 2);
+        await s.sleep(250);
+        const opt = await s.rect("div.fixed button", "status");
+        await s.click(opt.x + 30, opt.y + opt.height / 2);
+        await s.js(`
+          const sec = [...document.querySelectorAll("section")].find((x) => x.textContent.includes("Column values"));
+          for (let i = 0; i < 30 && !sec.textContent.includes("Distinct values"); i++) await new Promise((r) => setTimeout(r, 100));
+          sec.scrollIntoView({ block: "end" });`);
+        await s.sleep(400);
+        const indexes = await s.rect("section", "Indexes (");
+        const columns = await s.rect("section", "Column values");
+        await s.shot("table-doctor-columns", around([indexes, columns], 14));
+      },
+    },
+    {
+      name: "tree-dots",
+      async run(s) {
+        await s.load(seed);
+        await s.js(`
+          const { useStore } = await import("/src/store.ts");
+          const { useDoctor } = await import("/src/lib/doctor.ts");
+          useStore.getState().setFocus({ connId: "demo-shop", schema: "public", open: true });
+          for (let i = 0; i < 50 && !useDoctor.getState().schemas["demo-shop|public"]?.tables; i++) await new Promise((r) => setTimeout(r, 100));`);
+        await openOrdersDoctor(s);
+        const panel = await leftPanel(s);
+        const main = await mainBox(s);
+        await s.shot("tree-dots", { x: panel.x, y: panel.y, width: main.x + 520 - panel.x, height: 400 });
+      },
+    },
+    {
+      name: "database-doctor",
+      async run(s) {
+        await s.load(seed);
+        await s.js(`
+          const { openDbDoctor, useDoctor } = await import("/src/lib/doctor.ts");
+          const { useStore } = await import("/src/store.ts");
+          openDbDoctor("demo-shop", ["public", "billing"], "shop");
+          for (let i = 0; i < 50 && !useDoctor.getState().dbTabs[useStore.getState().activeTabId]?.at; i++) await new Promise((r) => setTimeout(r, 100));
+          const { useImports } = await import("/src/lib/importJobs.ts");
+          for (const t of useImports.getState().toasts) useImports.getState().closeToast(t.id);`);
+        await s.sleep(500);
+        const main = await mainBox(s);
+        await s.shot("database-doctor", { ...main, height: 760 });
       },
     },
   ],

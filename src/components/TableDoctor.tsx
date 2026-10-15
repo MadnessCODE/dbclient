@@ -168,7 +168,7 @@ export function Summary({ findings, ignored = 0 }: { findings: Finding[]; ignore
       {(["critical", "warning", "info"] as const).map((s) =>
         count(s) > 0 ? (
           <span key={s} className={cx("rounded px-1.5 py-0.5", SEV[s].bg, SEV[s].text)}>
-            {count(s)} {s === "info" ? "info" : `${SEV[s].label.toLowerCase()}${count(s) > 1 ? "s" : ""}`}
+            {count(s)} {s === "warning" ? `warning${count(s) > 1 ? "s" : ""}` : s}
           </span>
         ) : null,
       )}
