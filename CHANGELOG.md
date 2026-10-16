@@ -12,6 +12,83 @@ How to write a section so it looks good on both:
   followed by numbered steps.
 - Smaller changes stay one bullet each.
 
+## 0.1.7
+
+> Filter results with a click instead of writing WHERE, see which queries slow a table down and
+> what index would fix them, and read execution plans as a tree.
+
+### New
+
+#### Grid filters
+Narrow down any result without touching the SQL. Pick a column, choose a condition and the
+query runs again in the database with your filter, so it searches the whole table, not just the
+rows on screen. Filters work with database sorting, export and editing, and stay as long as you
+re-run the same query.
+
+![Filter chips above the results, with the generated WHERE below them](https://madnesscode.github.io/dbclient/releases/0.1.7/grid-filters.png)
+
+The filter adapts to the column: text (contains, starts with, in a list), numbers, dates with a
+picker and quick ranges like *last 7 days*, Unix timestamps shown as dates, booleans, enums and
+sets. It also lists the column's most common values: click one to filter by it.
+
+![Editing a filter: conditions and the most common values of the column](https://madnesscode.github.io/dbclient/releases/0.1.7/grid-filter-popover.png)
+
+**How to use it**
+1. Run a query, then click **+ Filter** above the results and pick a column. Or right-click a
+   cell and choose *= value*, *≠ value*, *is null*…, or `Alt`+click a value to filter by it.
+2. Click a filter chip to change it, or its **×** to remove it. Switch between **AND** and
+   **OR** when you have several.
+3. Need something special? Type a condition in the **WHERE** box, with column completion.
+4. **To editor** writes the filtered query into the editor; **Clear** removes all filters.
+
+#### Slow queries and index suggestions
+Table Doctor now shows the statements that use the table the most: how often they run, how long
+they take in total and on average. Click one to open it in a new tab with its plan.
+
+From the plans of those statements it suggests indexes that would help, with the reason, the
+numbers and the `CREATE INDEX` ready to run through the usual preview and production check. It
+skips columns that already have an index and columns with only a few distinct values, where an
+index wouldn't help.
+
+![The slowest statements on a table and the indexes that would help](https://madnesscode.github.io/dbclient/releases/0.1.7/slow-queries.png)
+
+On PostgreSQL with the **hypopg** extension, **What if?** shows what an index would change
+before you create it: the plan is calculated as if the index existed, and nothing is created and
+no query runs.
+
+![What if: the query cost with the index, before creating it](https://madnesscode.github.io/dbclient/releases/0.1.7/what-if.png)
+
+**How to use it**
+1. Right-click a table → **Analyze table** and scroll to **Slow queries**.
+2. Click a statement to see its plan, or open a suggested index to see why it helps.
+3. **What if?** (PostgreSQL with hypopg) shows the cost before and after; **Create index…** builds
+   it in the background.
+4. Statistics not on yet? The section says what's missing (`pg_stat_statements` on PostgreSQL,
+   `performance_schema` on MySQL) and offers an **Enable…** button with the SQL that turns it on,
+   when that can be done from a connection.
+
+#### Visual Explain
+**Explain** now draws the plan as a tree: every step with its share of the cost (or the time),
+estimated rows, and warnings where something looks wrong: a whole table read for a few rows,
+estimates off by 10× or more, a sort or hash spilling to disk, a nested loop over many rows, a
+MySQL join without an index. The most expensive steps are highlighted. **Raw** still shows the
+plan as text.
+
+![An analyzed plan with timings, row estimates and warnings](https://madnesscode.github.io/dbclient/releases/0.1.7/visual-explain.png)
+
+**How to use it**
+1. In a query tab press **Explain** (`Ctrl+E`) to see the plan without running anything.
+2. On PostgreSQL, **Explain Analyze** runs the statement to show real times and row counts. It
+   runs inside a transaction that is always rolled back, so nothing changes; statements that
+   modify data ask first.
+3. Click a step to see its conditions, keys, sort method and buffers.
+
+### Fixed
+- Queries that start with a comment (`-- what this does`) can now be filtered, sorted in the
+  database and exported with all rows.
+- An empty filtered result keeps the grid and its columns, so you can change the filter.
+- Explain only explains one statement at a time.
+
 ## 0.1.6
 
 > Table Doctor finds what slows a table down and fixes it with one click, for one table or the

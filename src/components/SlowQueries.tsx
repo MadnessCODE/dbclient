@@ -216,7 +216,9 @@ function WhatIfPanel({ r, columns, queryIds, hypopg, available }: { r: DoctorRef
       </div>
       {error && <p className="selectable text-err">{error}</p>}
       {res?.results.map((x) => {
-        const gain = x.beforeCost && x.afterCost != null ? Math.round((1 - x.afterCost / x.beforeCost) * 100) : null;
+        const g = x.beforeCost && x.afterCost != null ? (1 - x.afterCost / x.beforeCost) * 100 : null;
+        // never round a big win up to "-100%"
+        const gain = g == null ? null : g > 99 ? Math.floor(g * 10) / 10 : Math.round(g);
         return (
           <div key={x.queryId} className="rounded-md border border-line bg-panel px-3 py-2">
             <code className="block truncate font-mono text-[12px] text-fg-2">{x.query}</code>

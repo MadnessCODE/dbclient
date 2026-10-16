@@ -37,6 +37,15 @@ export interface Plan {
 
 const BIG = 10_000;
 
+/** A step at or below this one has rows off by 10x or more. */
+function misestimated(n: PlanNode): boolean {
+  if (n.estRows != null && n.actualRows != null) {
+    const hi = Math.max(n.estRows, n.actualRows);
+    if (hi >= 100 && hi / Math.max(1, Math.min(n.estRows, n.actualRows)) >= 10) return true;
+  }
+  return n.children.some(misestimated);
+}
+
 const num = (v: unknown): number | null => (typeof v === "number" && isFinite(v) ? v : typeof v === "string" && v !== "" && isFinite(Number(v)) ? Number(v) : null);
 const fmt = (n: number) => Math.round(n).toLocaleString();
 
@@ -135,7 +144,9 @@ function pgPlan(data: unknown): Plan | null {
       const hi = Math.max(est, act);
       const lo = Math.max(1, Math.min(est, act));
       if (hi >= 100 && hi / lo >= 10) {
-        n.warnings.push(`Estimated ${fmt(est)} rows, got ${fmt(act)} (${Math.round(hi / lo)}× off). Statistics may be stale: ANALYZE the table.`);
+        // reported once, where it starts: not again on every step above it
+        const fromBelow = n.children.some(misestimated);
+        if (!fromBelow) n.warnings.push(`Estimated ${fmt(est)} rows, got ${fmt(act)} (${Math.round(hi / lo)}× off). Statistics may be stale: ANALYZE the table.`);
       }
     }
     if (s("Sort Space Type") === "Disk") n.warnings.push("The sort spilled to disk. More work_mem, or an index in this order, keeps it in memory.");

@@ -112,6 +112,28 @@ async function openOrdersDoctor(s) {
   await s.sleep(500);
 }
 
+/** Runs the demo query with two grid filters: country in RS/HR/SI and created in the last 30 days. */
+async function filteredGrid(s) {
+  await s.js(`
+    const { useStore } = await import("/src/store.ts");
+    const { viewQuery } = await import("/src/lib/filter.ts");
+    await useStore.getState().runTab("t1");
+    const base = useStore.getState().runtime.t1.lastSql;
+    const since = String(Math.floor(Date.now() / 1000) - 30 * 86400);
+    const filters = {
+      base,
+      join: "and",
+      where: "",
+      items: [
+        { id: "f1", col: "country", origin: "country", kind: "text", typeName: "text", op: "in", values: ["RS", "HR", "SI"] },
+        { id: "f2", col: "created_at", origin: "created_at", kind: "number", typeName: "int8", ts: "s", op: "gt", value: since },
+      ],
+    };
+    const sql = viewQuery(base, "postgres", filters, [], ["id", "email", "country", "created_at", "last_login"]);
+    await useStore.getState().runTab("t1", sql, { filters });`);
+  await s.sleep(800);
+}
+
 /** Main area (tab bar and the active tab). */
 const mainBox = (s) => s.rect("main");
 
@@ -289,6 +311,78 @@ export const scenarios = {
         await s.sleep(500);
         const main = await mainBox(s);
         await s.shot("database-doctor", { ...main, height: 760 });
+      },
+    },
+  ],
+  "0.1.7": [
+    {
+      name: "grid-filters",
+      async run(s) {
+        await s.load(seed);
+        await filteredGrid(s);
+        const grid = await s.rect("main > div.rounded-lg");
+        await s.shot("grid-filters", { ...grid, height: Math.min(grid.height, 360) });
+      },
+    },
+    {
+      name: "grid-filter-popover",
+      async run(s) {
+        await s.load(seed);
+        await filteredGrid(s);
+        const chip = await s.rect("button[title='Edit filter']", "country");
+        await s.click(chip.x + 20, chip.y + chip.height / 2);
+        await s.sleep(700);
+        const pop = await s.rect("div.fixed.rounded-xl", "Most common values");
+        const grid = await s.rect("main > div.rounded-lg");
+        await s.shot("grid-filter-popover", around([{ ...grid, height: pop.y + pop.height - grid.y + 10 }, pop], 0));
+      },
+    },
+    {
+      name: "slow-queries",
+      async run(s) {
+        await s.load(seed);
+        await openOrdersDoctor(s);
+        await s.js(`
+          const sec = [...document.querySelectorAll("section")].find((x) => x.textContent.includes("Slow queries"));
+          for (let i = 0; i < 40 && !sec.textContent.includes("Suggested indexes"); i++) await new Promise((r) => setTimeout(r, 100));
+          sec.scrollIntoView({ block: "start" });`);
+        await s.sleep(400);
+        const sec = await s.rect("section", "Slow queries");
+        await s.shot("slow-queries", { ...sec, x: sec.x - 14, y: sec.y - 14, width: sec.width + 28, height: Math.min(sec.height + 28, 640) });
+      },
+    },
+    {
+      name: "what-if",
+      async run(s) {
+        await s.load(seed);
+        await openOrdersDoctor(s);
+        await s.js(`
+          const sec = [...document.querySelectorAll("section")].find((x) => x.textContent.includes("Slow queries"));
+          for (let i = 0; i < 40 && !sec.textContent.includes("Suggested indexes"); i++) await new Promise((r) => setTimeout(r, 100));
+          [...sec.querySelectorAll("[role=button]")].find((e) => e.textContent.includes("(customer_id)")).click();
+          await new Promise((r) => setTimeout(r, 200));
+          [...sec.querySelectorAll("button")].find((b) => b.textContent.includes("What if?")).click();
+          for (let i = 0; i < 40 && !sec.textContent.includes("Cost "); i++) await new Promise((r) => setTimeout(r, 100));
+          sec.querySelector("h3").scrollIntoView({ block: "start" });`);
+        await s.sleep(400);
+        const row = await s.rect("section [role=button]", "Index on (customer_id)");
+        const result = await s.rect("section div.rounded-md", "Cost ");
+        const top = row.y - 52;
+        await s.shot("what-if", { x: row.x - 14, y: top, width: row.width + 28, height: result.y + result.height + 14 - top });
+      },
+    },
+    {
+      name: "visual-explain",
+      async run(s) {
+        await s.load(seed);
+        await s.js(`
+          const { useStore } = await import("/src/store.ts");
+          const sql = "SELECT o.id, o.total, c.email\\nFROM orders o\\nJOIN customers c ON c.id = o.customer_id\\nWHERE o.status = 'pending'\\nORDER BY o.created_at DESC;";
+          useStore.getState().updateTab("t1", { sql });
+          await useStore.getState().explainTab("t1", sql, true);`);
+        await s.sleep(600);
+        const main = await s.rect("main");
+        await s.shot("visual-explain", { ...main, y: main.y + 6, height: main.height - 6 });
       },
     },
   ],

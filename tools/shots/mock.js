@@ -216,6 +216,82 @@
     histogram: [], indexes: ["orders_status_idx", "orders_status_idx2"],
   };
 
+  // Grid filters: most common values of a column (SELECT _v.col, count(*) … GROUP BY …)
+  const topValues = {
+    country: [["RS", "18210"], ["DE", "9120"], ["HR", "6022"], ["AT", "4410"], ["SI", "3310"], ["GB", "2950"], ["FR", "2210"], ["IT", "1104"], ["PL", "620"], ["DK", "254"]],
+  };
+  const topValuesResult = (sql) => {
+    const col = (/_v\.\"?(\w+)\"?/.exec(sql) ?? [])[1] ?? "value";
+    const rows = topValues[col] ?? [["(other)", "1"]];
+    return {
+      resultSets: [{ columns: [meta(col, "text"), { name: "n", typeName: "int8", origin: null, fk: null }], rows, returnsRows: true, rowsAffected: 0, truncated: false }],
+      elapsedMs: 41,
+    };
+  };
+
+  // Visual Explain: one query on orders, with and without ANALYZE
+  const analyzedPlan = [{
+    Plan: {
+      "Node Type": "Sort", "Total Cost": 52115.5, "Plan Rows": 2100, "Actual Total Time": 431.6, "Actual Rows": 34120, "Actual Loops": 1,
+      "Sort Key": ["o.created_at DESC"], "Sort Method": "external merge", "Sort Space Used": 2856, "Sort Space Type": "Disk",
+      Plans: [{
+        "Node Type": "Hash Join", "Join Type": "Inner", "Total Cost": 51960.1, "Plan Rows": 2100, "Actual Total Time": 352.9, "Actual Rows": 34120, "Actual Loops": 1,
+        "Hash Cond": "(o.customer_id = c.id)",
+        Plans: [
+          { "Node Type": "Seq Scan", "Relation Name": "orders", Alias: "o", "Total Cost": 50310.0, "Plan Rows": 2100, "Actual Total Time": 301.2, "Actual Rows": 34120, "Actual Loops": 1,
+            Filter: "(status = 'pending'::text)", "Rows Removed by Filter": 357084, "Shared Hit Blocks": 2210, "Shared Read Blocks": 9010 },
+          { "Node Type": "Hash", "Total Cost": 941.1, "Plan Rows": 48210, "Actual Total Time": 19.8, "Actual Rows": 48210, "Actual Loops": 1,
+            "Hash Buckets": 65536, "Hash Batches": 1, "Peak Memory Usage": 3012,
+            Plans: [{ "Node Type": "Seq Scan", "Relation Name": "customers", Alias: "c", "Total Cost": 941.1, "Plan Rows": 48210, "Actual Total Time": 8.4, "Actual Rows": 48210, "Actual Loops": 1 }] },
+        ],
+      }],
+    },
+    "Planning Time": 0.41,
+    "Execution Time": 436.2,
+  }];
+  const plainPlan = JSON.parse(JSON.stringify(analyzedPlan, (k, v) => (/^Actual|Rows Removed|Shared|Sort Method|Sort Space|Hash Batches|Hash Buckets|Peak Memory|Planning Time|Execution Time/.test(k) ? undefined : v)));
+  const explainResult = (a) => {
+    const plan = a.analyze ? analyzedPlan : plainPlan;
+    return { text: JSON.stringify(plan, null, 2), json: JSON.stringify(plan), analyzed: !!a.analyze };
+  };
+
+  // Slow queries on orders
+  const slow = (id, query, calls, totalMs, rows) => ({ id, query, sample: null, calls, totalMs, meanMs: totalMs / calls, rows });
+  const tableQueries = {
+    unavailable: null,
+    hypopg: true,
+    hypopgAvailable: false,
+    notes: ["Statements are matched by the table name in their text."],
+    queries: [
+      slow("1", "SELECT o.id, o.total, c.email FROM orders o JOIN customers c ON c.id = o.customer_id WHERE o.status = $1 ORDER BY o.created_at DESC", 18420, 4212000, 628440),
+      slow("2", "SELECT * FROM orders WHERE customer_id = $1 ORDER BY created_at DESC LIMIT $2", 412000, 1854000, 8240000),
+      slow("4", "SELECT id, customer_id, total FROM orders WHERE total > $1 ORDER BY total DESC", 2880, 410112, 2880),
+      slow("3", "UPDATE orders SET status = $1 WHERE id = $2", 96000, 61440, 96000),
+    ],
+    suggestions: [
+      {
+        columns: ["customer_id"],
+        queryIds: ["2"],
+        finding: f("suggest-index:customer_id", "warning", "Index on (customer_id) would help 1 slow query",
+          "The plan reads the whole table and filters on customer_id. An index on these columns lets the database jump to the matching rows instead.",
+          [ev("Columns", "customer_id"), ev("Queries", "1 · 412,000 calls"), ev("Total time", "30.9 min"), ev("Mean time", "4.5 ms"), ev("Table rows", "391,204")],
+          fix("Create index", `CREATE INDEX CONCURRENTLY "orders_customer_id_idx" ON ${ORDERS} ("customer_id");`, "Builds without blocking writes; takes longer than a plain CREATE INDEX. If it fails it leaves an invalid index to drop.", true)),
+      },
+      {
+        columns: ["total"],
+        queryIds: ["4"],
+        finding: f("suggest-index:total", "warning", "Index on (total) would help 1 slow query",
+          "The plan reads the whole table and filters on total. An index on these columns lets the database jump to the matching rows instead.",
+          [ev("Columns", "total"), ev("Queries", "1 · 2,880 calls"), ev("Total time", "6.8 min"), ev("Mean time", "142.4 ms"), ev("Table rows", "391,204")],
+          fix("Create index", `CREATE INDEX CONCURRENTLY "orders_total_idx" ON ${ORDERS} ("total");`, "Builds without blocking writes; takes longer than a plain CREATE INDEX. If it fails it leaves an invalid index to drop.", true)),
+      },
+    ],
+  };
+  const whatIf = {
+    index: 'CREATE INDEX ON "public"."orders" ("customer_id")',
+    results: [{ queryId: "2", query: tableQueries.queries[1].query, beforeCost: 50310, afterCost: 12.4, beforeScan: "Seq Scan", afterScan: "Index Scan using the new index", usesIndex: true, error: null }],
+  };
+
   const handlers = {
     list_connections: () => connections,
     list_projects: () => [],
@@ -227,13 +303,15 @@
     get_table_structure: () => customersStructure,
     list_collations: () => [],
     list_known_hosts: () => [],
-    run_query: () => ({ resultSets: [customers], elapsedMs: 23 }),
-    explain_query: () => "Seq Scan on customers  (cost=0.00..1043.10 rows=48210 width=64)",
+    run_query: (a) => (/group by/i.test(a.sql ?? "") ? topValuesResult(a.sql) : { resultSets: [customers], elapsedMs: 23 }),
+    explain_query: explainResult,
+    table_queries: () => tableQueries,
+    what_if_index: () => whatIf,
     cancel_query: () => true,
     analyze_table: () => ordersHealth,
     analyze_schema: (a) => schemaHealth[a.schema] ?? { tables: [], notes: [] },
     column_stats: () => statusStats,
-    "plugin:app|version": () => "0.1.6",
+    "plugin:app|version": () => "0.1.7",
     "plugin:app|name": () => "DB Client",
     "plugin:dialog|ask": () => false,
     "plugin:dialog|confirm": () => false,

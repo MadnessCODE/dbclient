@@ -64,7 +64,11 @@ export function exportableQuery(sql: string | undefined, kind: DbKind): { sql: s
   if (!sql) return null;
   const stmts = splitStatements(sql, kind);
   if (stmts.length !== 1) return null;
-  const text = stmts[0].text.trim().replace(/;\s*$/, "");
+  // a query often starts with a comment saying what it does
+  const text = stmts[0].text
+    .trim()
+    .replace(/^(?:--[^\n]*(?:\n|$)\s*|\/\*[\s\S]*?\*\/\s*)+/, "")
+    .replace(/;\s*$/, "");
   if (!/^\(?\s*(select|with|table|values)\b/i.test(text)) return null;
   // WITH may contain writes (WITH x AS (DELETE ...)); never re-run those
   if (/\b(insert|update|delete|merge)\b/i.test(text) && /^with\b/i.test(text)) return null;
