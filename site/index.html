@@ -4,10 +4,15 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>DB Client · PostgreSQL & MySQL desktop client</title>
-    <meta name="description" content="Fast, open source desktop client for PostgreSQL and MySQL. SQL editor, editable grid, SSH tunnels, parallel import and export, users and a live process monitor." />
+    <meta name="description" content="Free, open source desktop client for PostgreSQL and MySQL on Windows, macOS and Linux. SQL editor, editable grid with filters, visual Explain, Table Doctor with index suggestions, SSH tunnels, fast parallel import and export." />
+    <link rel="canonical" href="https://madnesscode.github.io/dbclient/" />
+    <link rel="alternate" type="text/plain" title="DB Client for language models" href="llms.txt" />
+    <link rel="sitemap" type="application/xml" href="sitemap.xml" />
     <meta property="og:title" content="DB Client" />
     <meta property="og:description" content="Fast, open source desktop client for PostgreSQL and MySQL." />
     <meta property="og:type" content="website" />
+    <meta property="og:url" content="https://madnesscode.github.io/dbclient/" />
+    <meta property="og:image" content="https://madnesscode.github.io/dbclient/releases/0.1.6/table-doctor.png" />
     <meta name="theme-color" content="#070d1a" />
     <link rel="icon" href="icon.svg" type="image/svg+xml" />
     <link rel="preconnect" href="https://fonts.googleapis.com" />
@@ -15,6 +20,51 @@
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
     <link rel="stylesheet" href="style.css" />
     <link rel="stylesheet" href="mockup.css" />
+    <!-- version and date are filled in when the site is published (tools/site/build.mjs) -->
+    <script type="application/ld+json">
+      {
+        "@context": "https://schema.org",
+        "@type": "SoftwareApplication",
+        "name": "DB Client",
+        "description": "Free, open source desktop client for PostgreSQL and MySQL / MariaDB: SQL editor, editable results grid with filters, visual Explain, Table Doctor with index suggestions, schema and ER tools, SSH tunnels, fast parallel import and export, users and a process monitor.",
+        "url": "https://madnesscode.github.io/dbclient/",
+        "downloadUrl": "https://github.com/MadnessCODE/dbclient/releases/latest",
+        "releaseNotes": "https://madnesscode.github.io/dbclient/whats-new.html",
+        "softwareVersion": "latest",
+        "dateModified": "today",
+        "applicationCategory": "DeveloperApplication",
+        "applicationSubCategory": "Database client",
+        "operatingSystem": "Windows 10, Windows 11, macOS 11+, Linux",
+        "license": "https://opensource.org/licenses/MIT",
+        "isAccessibleForFree": true,
+        "offers": {
+          "@type": "Offer",
+          "price": "0",
+          "priceCurrency": "USD"
+        },
+        "author": {
+          "@type": "Organization",
+          "name": "MadnessCODE",
+          "url": "https://github.com/madnesscode"
+        },
+        "codeRepository": "https://github.com/MadnessCODE/dbclient",
+        "programmingLanguage": "Rust",
+        "featureList": [
+          "PostgreSQL and MySQL / MariaDB",
+          "SQL editor with autocomplete",
+          "Editable results grid with filters",
+          "Visual Explain and Explain Analyze",
+          "Table Doctor: health checks, slow queries and index suggestions with one-click fixes",
+          "ER diagrams",
+          "SSH tunnels and SSL",
+          "Parallel import and export of SQL dumps, CSV, Excel and JSON",
+          "Users and privileges",
+          "Live process monitor",
+          "Production guard for PROD connections"
+        ],
+        "screenshot": "https://madnesscode.github.io/dbclient/releases/0.1.6/table-doctor.png"
+      }
+    </script>
   </head>
   <body>
     <div class="bg" aria-hidden="true">
@@ -29,6 +79,7 @@
       <nav>
         <a href="#features">Features</a>
         <a href="#speed">Speed</a>
+        <a href="#faq">FAQ</a>
         <a href="whats-new.html">What's new</a>
         <a href="#download">Download</a>
         <a class="gh" href="https://github.com/MadnessCODE/dbclient" target="_blank" rel="noopener">
@@ -72,6 +123,9 @@
           <article class="card reveal"><i class="ic" data-i="zap"></i><h3>Native speed</h3><p>Rust core, streams tens of thousands of rows in milliseconds. Starts instantly, about 5 MB to download.</p></article>
           <article class="card reveal"><i class="ic" data-i="code"></i><h3>SQL editor</h3><p>Monaco editor with autocomplete for tables, columns and aliases. Run a statement, a selection or the whole script.</p></article>
           <article class="card reveal"><i class="ic" data-i="grid"></i><h3>Editable grid</h3><p>Excel-like selection, typed cells, JSON viewer, date pickers. Edits are saved in a single transaction.</p></article>
+          <article class="card reveal"><i class="ic" data-i="doctor"></i><h3>Table Doctor</h3><p>Right-click a table: a health score, what slows it down and a one-click fix for each problem, shown as SQL first. Or check a whole database at once.</p></article>
+          <article class="card reveal"><i class="ic" data-i="filter"></i><h3>Grid filters</h3><p>Filter any result by column without writing WHERE. Dates, numbers, lists and the most common values, searched in the whole table.</p></article>
+          <article class="card reveal"><i class="ic" data-i="plan"></i><h3>Visual Explain &amp; slow queries</h3><p>Plans as a tree with the slowest steps highlighted, the queries that hurt a table most, and the index that would fix them.</p></article>
           <article class="card reveal"><i class="ic" data-i="key"></i><h3>SSH tunnels</h3><p>Reach private databases through a bastion. Host keys are pinned and passwords live in the OS keychain.</p></article>
           <article class="card reveal"><i class="ic" data-i="shield"></i><h3>Production guard</h3><p>Mark connections as PROD and every write asks for confirmation first. Colored everywhere so you always know where you are.</p></article>
           <article class="card reveal"><i class="ic" data-i="arrows"></i><h3>Parallel import & backups</h3><p>Load SQL dumps, CSV, Excel and JSON, or back up a whole database to one .sql.gz file. Several connections at once, in the background.</p></article>
@@ -120,6 +174,92 @@
           </div>
           <p class="b-note">Local tests, same machine and server for every tool.</p>
         </div>
+      </section>
+
+      <section id="faq" class="section">
+        <h2 class="reveal">Questions, <span class="grad">answered</span></h2>
+        <div class="faq">
+          <details class="qa reveal"><summary>Is DB Client free?</summary><p>Yes. DB Client is free and open source under the MIT license. There is no account, no trial and no paid tier.</p></details>
+          <details class="qa reveal"><summary>Which databases does it support?</summary><p>PostgreSQL and MySQL, including MariaDB. One app for both, with features tuned to each: pg_stat_statements and hypopg on PostgreSQL, performance_schema on MySQL.</p></details>
+          <details class="qa reveal"><summary>Which operating systems does it run on?</summary><p>Windows 10 and 11 (x64 and ARM64), macOS 11 or newer (one universal build for Apple Silicon and Intel) and Linux x64 and ARM64 as AppImage, .deb or .rpm. It installs for your user without admin rights and updates itself.</p></details>
+          <details class="qa reveal"><summary>How do I find slow queries and missing indexes?</summary><p>Right-click a table and choose Analyze table. Table Doctor lists the statements that use the table the most, reads their plans and suggests indexes, ready to create with one click. On PostgreSQL with the hypopg extension, What if? shows the cost before and after an index without creating it. Explain shows any plan as a tree with warnings.</p></details>
+          <details class="qa reveal"><summary>Is it safe to use on a production database?</summary><p>Mark a connection as production and every statement that changes data asks for confirmation first. Fixes are shown as SQL before they run, and Explain Analyze runs inside a transaction that is rolled back. Table Doctor only reads statistics.</p></details>
+          <details class="qa reveal"><summary>Can it connect through SSH?</summary><p>Yes. SSH tunnels with a password or a private key, with host key verification. Passwords are stored in the operating system&#x27;s keychain.</p></details>
+          <details class="qa reveal"><summary>Can I bring my connections from DBeaver or pgAdmin?</summary><p>Yes. DB Client finds the connections saved by DBeaver, pgAdmin 4, MySQL Workbench, Sequel Ace, Sequel Pro and .pgpass and imports them in one click, with SSH tunnels, folders and saved passwords where the tool allows it.</p></details>
+          <details class="qa reveal"><summary>How fast are import and export?</summary><p>Dumps are split and loaded over several connections at once. In local tests a 300 MB dump loaded 2.4 to 2.5 times faster than psql and the mysql client, and a database backup ran about 5 times faster than pg_dump and mysqldump.</p></details>
+        </div>
+        <script type="application/ld+json">
+          {
+            "@context": "https://schema.org",
+            "@type": "FAQPage",
+            "mainEntity": [
+              {
+                "@type": "Question",
+                "name": "Is DB Client free?",
+                "acceptedAnswer": {
+                  "@type": "Answer",
+                  "text": "Yes. DB Client is free and open source under the MIT license. There is no account, no trial and no paid tier."
+                }
+              },
+              {
+                "@type": "Question",
+                "name": "Which databases does it support?",
+                "acceptedAnswer": {
+                  "@type": "Answer",
+                  "text": "PostgreSQL and MySQL, including MariaDB. One app for both, with features tuned to each: pg_stat_statements and hypopg on PostgreSQL, performance_schema on MySQL."
+                }
+              },
+              {
+                "@type": "Question",
+                "name": "Which operating systems does it run on?",
+                "acceptedAnswer": {
+                  "@type": "Answer",
+                  "text": "Windows 10 and 11 (x64 and ARM64), macOS 11 or newer (one universal build for Apple Silicon and Intel) and Linux x64 and ARM64 as AppImage, .deb or .rpm. It installs for your user without admin rights and updates itself."
+                }
+              },
+              {
+                "@type": "Question",
+                "name": "How do I find slow queries and missing indexes?",
+                "acceptedAnswer": {
+                  "@type": "Answer",
+                  "text": "Right-click a table and choose Analyze table. Table Doctor lists the statements that use the table the most, reads their plans and suggests indexes, ready to create with one click. On PostgreSQL with the hypopg extension, What if? shows the cost before and after an index without creating it. Explain shows any plan as a tree with warnings."
+                }
+              },
+              {
+                "@type": "Question",
+                "name": "Is it safe to use on a production database?",
+                "acceptedAnswer": {
+                  "@type": "Answer",
+                  "text": "Mark a connection as production and every statement that changes data asks for confirmation first. Fixes are shown as SQL before they run, and Explain Analyze runs inside a transaction that is rolled back. Table Doctor only reads statistics."
+                }
+              },
+              {
+                "@type": "Question",
+                "name": "Can it connect through SSH?",
+                "acceptedAnswer": {
+                  "@type": "Answer",
+                  "text": "Yes. SSH tunnels with a password or a private key, with host key verification. Passwords are stored in the operating system's keychain."
+                }
+              },
+              {
+                "@type": "Question",
+                "name": "Can I bring my connections from DBeaver or pgAdmin?",
+                "acceptedAnswer": {
+                  "@type": "Answer",
+                  "text": "Yes. DB Client finds the connections saved by DBeaver, pgAdmin 4, MySQL Workbench, Sequel Ace, Sequel Pro and .pgpass and imports them in one click, with SSH tunnels, folders and saved passwords where the tool allows it."
+                }
+              },
+              {
+                "@type": "Question",
+                "name": "How fast are import and export?",
+                "acceptedAnswer": {
+                  "@type": "Answer",
+                  "text": "Dumps are split and loaded over several connections at once. In local tests a 300 MB dump loaded 2.4 to 2.5 times faster than psql and the mysql client, and a database backup ran about 5 times faster than pg_dump and mysqldump."
+                }
+              }
+            ]
+          }
+        </script>
       </section>
 
       <section id="download" class="section">

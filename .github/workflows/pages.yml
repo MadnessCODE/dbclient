@@ -3,7 +3,7 @@ name: Website
 on:
   push:
     branches: [main]
-    paths: ["site/**", "CHANGELOG.md"]
+    paths: ["site/**", "CHANGELOG.md", "tools/site/**"]
   workflow_dispatch:
 
 permissions:
@@ -28,6 +28,8 @@ jobs:
       - uses: actions/configure-pages@v5
       # the What's new page renders the changelog
       - run: cp CHANGELOG.md site/
+      # release notes in the HTML, version in the structured data, llms-full.txt and sitemap.xml
+      - run: node tools/site/build.mjs site
       - uses: actions/upload-pages-artifact@v3
         with:
           path: site

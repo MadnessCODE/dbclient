@@ -1,4 +1,6 @@
-// What's new: renders CHANGELOG.md (copied next to this page when the site deploys).
+// What's new: renders CHANGELOG.md (copied next to this page when the site deploys). The deploy
+// also renders it into the page ahead of time (tools/site/build.mjs) for readers without
+// JavaScript, like search engines and AI crawlers; the script then only adds the interactions.
 // Format: "## <version>" per release, "> summary", "### Group", "#### Feature" with paragraphs,
 // images, "**How to use it**" + numbered steps; smaller changes are "- " bullets.
 
@@ -173,6 +175,8 @@ function renderRelease(r, i) {
   </section>`;
 }
 
+const versionLinks = (releases) => releases.map((r, i) => `<a href="#v${esc(r.version)}"${i === 0 ? ' class="latest"' : ""}>v${esc(r.version)}</a>`).join("");
+
 async function load() {
   for (const src of SOURCES) {
     try {
@@ -206,17 +210,17 @@ function lightbox() {
 async function main() {
   const root = document.getElementById("releases");
   try {
-    const releases = parse(await load());
-    root.innerHTML = releases.map(renderRelease).join("");
+    if (!("ready" in root.dataset)) {
+      const releases = parse(await load());
+      root.innerHTML = releases.map(renderRelease).join("");
+      document.getElementById("versions").innerHTML = versionLinks(releases);
+    }
     // screenshots are taken at 2x: show them at their real size (still shrinking to fit)
     for (const img of root.querySelectorAll(".shot img")) {
       const fit = () => (img.style.width = `${img.naturalWidth / 2}px`);
       if (img.complete && img.naturalWidth) fit();
       else img.addEventListener("load", fit, { once: true });
     }
-    document.getElementById("versions").innerHTML = releases
-      .map((r, i) => `<a href="#v${esc(r.version)}"${i === 0 ? ' class="latest"' : ""}>v${esc(r.version)}</a>`)
-      .join("");
     // jump to the version from the link (the app opens #v<version>) once the content exists
     const target = location.hash && document.getElementById(decodeURIComponent(location.hash.slice(1)));
     if (target) {
@@ -230,4 +234,6 @@ async function main() {
   lightbox();
 }
 
-main();
+// in the browser; the site build runs this file for its renderer only
+if (typeof document !== "undefined") main();
+else globalThis.WN = { parse, renderRelease, versionLinks };

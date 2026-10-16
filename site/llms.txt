@@ -1,0 +1,35 @@
+# DB Client
+
+> DB Client is a free, open source (MIT) desktop client for PostgreSQL and MySQL / MariaDB, built with Rust and Tauri. It runs on Windows, macOS and Linux, starts instantly, and covers daily database work: an SQL editor, an editable results grid with filters, schema tools, fast parallel import and export, user management, a live process monitor, and Table Doctor, which finds what slows a table down and fixes it with one click.
+
+DB Client is made by MadnessCODE. It is in beta and updates itself. There is no account, no telemetry requirement and no paid tier; passwords are kept in the operating system's keychain.
+
+## Key facts
+
+- Databases: PostgreSQL and MySQL / MariaDB.
+- Platforms: Windows 10 and 11 (x64 and ARM64), macOS 11+ (Apple Silicon and Intel, one universal build), Linux x64 and ARM64 (AppImage, .deb, .rpm).
+- License and price: MIT, free.
+- Download size: a few MB; installs for the current user without admin rights.
+- Technology: Rust backend (sqlx), Tauri 2, React and TypeScript, Monaco editor.
+
+## Features
+
+- SQL editor with autocomplete for tables, columns and aliases; run the statement under the cursor, a selection or the whole script; per-tab history; favorite queries in categories.
+- Results grid that stays fast with large results: inline editing saved in one transaction with an SQL preview, date and time pickers, JSON viewer, Unix timestamps shown as dates, foreign-key links, export to CSV, Excel (.xlsx), JSON and SQL INSERT.
+- Grid filters: filter a result by column without writing WHERE (text, numbers, dates with quick ranges, booleans, enums), with the column's most common values; the query re-runs in the database so the whole table is searched.
+- Visual Explain: execution plans as a tree with the cost or time share of each step, estimated versus actual rows, and warnings (full table scans, bad row estimates, sorts spilling to disk, nested loops over many rows). Explain Analyze on PostgreSQL runs inside a transaction that is rolled back.
+- Table Doctor: right-click a table to get a health score and findings with one-click fixes shown as SQL first: dead rows and vacuum, unused, duplicate and redundant indexes, foreign keys without an index, missing primary keys, stale statistics, wasted space, MyISAM tables, money stored as floats. It lists the table's slowest queries (pg_stat_statements or performance_schema), suggests indexes from their plans and, with hypopg, shows the cost before and after an index without creating it.
+- Database Doctor: the same checks across every table of a schema or database, ranked by severity and table size; health dots in the schema tree.
+- Schema tools: schema tree with search and sizes, structure editor for columns, indexes and foreign keys with an ALTER preview, ER diagrams exportable as one HTML file with documentation.
+- Import and export: SQL dumps (mysqldump, pg_dump plain and custom format) imported in parallel over several connections; CSV, Excel and JSON into new or existing tables; whole-database backups to .sql or .sql.gz from one consistent snapshot, about 2 to 5 times faster than psql, mysql, pg_dump and mysqldump in local tests.
+- Connections: SSL, SSH tunnels with password or key and host key verification, projects, colors and DEV / STAGING / PROD labels; a production guard asks before statements that change data on production. Import connections from DBeaver, pgAdmin 4, MySQL Workbench, Sequel Ace / Sequel Pro and .pgpass.
+- Administration: users and roles with privileges at database, schema, table and view level; live processes with lock waits, cancel a query or kill a connection.
+
+## Links
+
+- [Website](https://madnesscode.github.io/dbclient/): overview, screenshots and downloads.
+- [What's new](https://madnesscode.github.io/dbclient/whats-new.html): release notes with screenshots and how-to steps for every version.
+- [Full text for language models](https://madnesscode.github.io/dbclient/llms-full.txt): this file plus all release notes.
+- [Latest release and installers](https://github.com/MadnessCODE/dbclient/releases/latest)
+- [Source code and README](https://github.com/MadnessCODE/dbclient)
+- [Report an issue](https://github.com/MadnessCODE/dbclient/issues)
