@@ -6,6 +6,7 @@ import { Button, cx, IconButton, Spinner, MOD } from "./ui";
 import { StructurePanel } from "./StructurePanel";
 import { DataGrid } from "./DataGrid";
 import { HistoryView } from "./HistoryView";
+import { ExplainView } from "./ExplainView";
 import { baseId } from "../lib/connIds";
 
 export function ResultsPanel({ height }: { height?: number }) {
@@ -93,19 +94,7 @@ export function ResultsPanel({ height }: { height?: number }) {
       {resultTab === "structure" && <StructurePanel tab={tab} />}
       {resultTab === "messages" && <Messages rt={rt} />}
       {resultTab === "history" && <HistoryView tab={tab} />}
-      {resultTab === "explain" && (
-        <div className="min-h-0 flex-1 overflow-auto p-4">
-          {rt?.explaining ? (
-            <div className="flex items-center gap-2 text-muted">
-              <Spinner /> Explaining…
-            </div>
-          ) : rt?.explain ? (
-            <pre className="selectable font-mono text-[12.5px] leading-relaxed text-fg-2">{rt.explain}</pre>
-          ) : (
-            <p className="text-muted">Click “Explain” ({MOD}+E) to see how the database will execute the current statement.</p>
-          )}
-        </div>
-      )}
+      {resultTab === "explain" && <ExplainView tab={tab} rt={rt} kind={kind} />}
     </div>
   );
 }

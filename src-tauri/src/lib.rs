@@ -9,6 +9,7 @@ mod autotune;
 mod import;
 mod pgcustom;
 mod projects;
+mod queries;
 mod schema;
 mod ssh;
 mod store;
@@ -298,6 +299,18 @@ async fn analyze_schema(pools: State<'_, Pools>, id: String, schema: String) -> 
     doctor::analyze_schema(&pools.get(&id)?, &schema).await
 }
 
+/// Table Doctor: slowest statements on a table and index suggestions from their plans.
+#[tauri::command]
+async fn table_queries(pools: State<'_, Pools>, id: String, schema: String, table: String) -> AppResult<queries::TableQueries> {
+    queries::table_queries(&pools.get(&id)?, &schema, &table).await
+}
+
+/// hypopg: plans of the given statements with a hypothetical index.
+#[tauri::command]
+async fn what_if_index(pools: State<'_, Pools>, id: String, schema: String, table: String, columns: Vec<String>, query_ids: Vec<String>) -> AppResult<queries::WhatIf> {
+    queries::what_if(&pools.get(&id)?, &schema, &table, &columns, &query_ids).await
+}
+
 #[tauri::command]
 async fn column_stats(pools: State<'_, Pools>, id: String, schema: String, table: String, column: String) -> AppResult<doctor::ColumnStats> {
     doctor::column_stats(&pools.get(&id)?, &schema, &table, &column).await
@@ -365,8 +378,8 @@ async fn execute_in_databases(pools: State<'_, Pools>, id: String, batches: Vec<
 }
 
 #[tauri::command]
-async fn explain_query(pools: State<'_, Pools>, conn_id: String, sql: String, database: Option<String>) -> AppResult<String> {
-    db::explain(&pools.get(&conn_id)?, &sql, database.as_deref()).await
+async fn explain_query(pools: State<'_, Pools>, conn_id: String, sql: String, database: Option<String>, analyze: Option<bool>) -> AppResult<db::ExplainOutput> {
+    db::explain(&pools.get(&conn_id)?, &sql, database.as_deref(), analyze.unwrap_or(false)).await
 }
 
 #[tauri::command]
@@ -502,6 +515,8 @@ pub fn run() {
             analyze_table,
             analyze_schema,
             column_stats,
+            table_queries,
+            what_if_index,
             er_model,
             list_collations,
             run_query,

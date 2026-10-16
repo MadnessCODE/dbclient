@@ -151,17 +151,17 @@ pub struct Fix {
     pub long: bool,
 }
 
-fn finding(id: impl Into<String>, severity: Severity, title: impl Into<String>, detail: impl Into<String>) -> Finding {
+pub(crate) fn finding(id: impl Into<String>, severity: Severity, title: impl Into<String>, detail: impl Into<String>) -> Finding {
     Finding { id: id.into(), severity, title: title.into(), detail: detail.into(), evidence: Vec::new(), fix: None }
 }
 
 impl Finding {
-    fn ev(mut self, label: &str, value: impl Into<String>) -> Self {
+    pub(crate) fn ev(mut self, label: &str, value: impl Into<String>) -> Self {
         self.evidence.push(Evidence { label: label.into(), value: value.into() });
         self
     }
 
-    fn fix(mut self, label: &str, sql: String, note: Option<&str>, long: bool) -> Self {
+    pub(crate) fn fix(mut self, label: &str, sql: String, note: Option<&str>, long: bool) -> Self {
         self.fix = Some(Fix { label: label.into(), sql, note: note.map(str::to_owned), long });
         self
     }
@@ -330,20 +330,20 @@ fn pg_array(s: &str) -> Vec<Option<String>> {
 
 // ---------- helpers ----------
 
-fn lit(s: &str, mysql: bool) -> String {
+pub(crate) fn lit(s: &str, mysql: bool) -> String {
     let s = s.replace('\'', "''");
     format!("'{}'", if mysql { s.replace('\\', "\\\\") } else { s })
 }
 
-fn qi(mysql: bool, name: &str) -> String {
+pub(crate) fn qi(mysql: bool, name: &str) -> String {
     if mysql { format!("`{}`", name.replace('`', "``")) } else { format!("\"{}\"", name.replace('"', "\"\"")) }
 }
 
-fn text(c: &Cell) -> String {
+pub(crate) fn text(c: &Cell) -> String {
     c.clone().unwrap_or_default()
 }
 
-fn int(c: &Cell) -> Option<i64> {
+pub(crate) fn int(c: &Cell) -> Option<i64> {
     let s = c.as_deref()?.trim();
     s.parse::<i64>().ok().or_else(|| s.parse::<f64>().ok().map(|f| f as i64))
 }
@@ -393,7 +393,7 @@ fn fmt_pct(p: f64) -> String {
 }
 
 /// Name for a new index: <table>_<cols>_idx, cut to the identifier limit.
-fn index_name(table: &str, cols: &[String], max: usize) -> String {
+pub(crate) fn index_name(table: &str, cols: &[String], max: usize) -> String {
     let mut name = format!("{table}_{}_idx", cols.join("_"));
     if name.len() > max {
         let mut cut = max - 4;

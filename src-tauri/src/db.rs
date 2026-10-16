@@ -315,7 +315,7 @@ async fn cancel_backend(pool: &DbPool, backend_id: i64) -> AppResult<()> {
 /// A MySQL connection whose default database is `database`. A pooled connection keeps the
 /// database of its last `USE`, so editor runs always send theirs: `Some("")` asks for a
 /// connection without one (connections that have one are closed instead of reused).
-async fn mysql_conn(p: &sqlx::MySqlPool, database: Option<&str>) -> AppResult<sqlx::pool::PoolConnection<sqlx::MySql>> {
+pub(crate) async fn mysql_conn(p: &sqlx::MySqlPool, database: Option<&str>) -> AppResult<sqlx::pool::PoolConnection<sqlx::MySql>> {
     let mut conn = p.acquire().await?;
     match database {
         Some(db) if !db.is_empty() => {
@@ -573,21 +573,94 @@ impl QueryResultExt for sqlx::mysql::MySqlQueryResult {
 }
 
 
-pub async fn explain(pool: &DbPool, sql: &str, database: Option<&str>) -> AppResult<String> {
-    let sql = sql.trim().trim_end_matches(';');
-    let (rows, kind) = match pool {
-        DbPool::Pg(_) => (pool.text_rows(&format!("EXPLAIN (VERBOSE false, COSTS true) {sql}")).await?, DbKind::Postgres),
-        DbPool::My(p) => {
-            let mut conn = mysql_conn(p, database).await?;
-            let rows = sqlx::raw_sql(AssertSqlSafe(format!("EXPLAIN FORMAT=TREE {sql}"))).fetch_all(&mut *conn).await?;
-            (rows.iter().map(|r| (0..r.len()).map(|i| my_cell(r, i)).collect()).collect::<Vec<Vec<Cell>>>(), DbKind::Mysql)
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ExplainOutput {
+    /// Plan as text (after ANALYZE: the JSON plan, indented)
+    pub text: String,
+    /// The same plan as JSON, for the visual plan
+    pub json: Option<String>,
+    pub analyzed: bool,
+}
+
+/// `$1`-style parameters, as in statements copied from pg_stat_statements.
+pub(crate) fn has_params(sql: &str) -> bool {
+    let b = sql.as_bytes();
+    b.windows(2).any(|w| w[0] == b'$' && w[1].is_ascii_digit())
+}
+
+/// Column 0 of every row as text, through the extended protocol: one statement only, so
+/// "x; drop ..." can never slip a second statement in.
+pub(crate) async fn pg_column(conn: &mut sqlx::PgConnection, sql: &str) -> AppResult<Vec<String>> {
+    let rows = sqlx::query(AssertSqlSafe(sql.to_owned())).fetch_all(&mut *conn).await?;
+    Ok(rows
+        .iter()
+        .filter_map(|r| {
+            let v = r.try_get_raw(0).ok()?;
+            if v.is_null() {
+                return None;
+            }
+            // text and json both arrive as UTF-8 in binary format
+            String::from_utf8(v.as_bytes().ok()?.to_vec()).ok()
+        })
+        .collect())
+}
+
+/// Plain EXPLAIN of a statement with `$n` parameters (PostgreSQL 16+ GENERIC_PLAN). These come
+/// unbound, so the simple protocol is needed; a `;` is refused instead.
+pub(crate) async fn pg_generic_column(conn: &mut sqlx::PgConnection, sql: &str) -> AppResult<Vec<String>> {
+    if sql.contains(';') {
+        return Err(msg("Only a single statement can be explained"));
+    }
+    let rows = sqlx::raw_sql(AssertSqlSafe(sql.to_owned())).fetch_all(&mut *conn).await?;
+    Ok(rows.iter().filter_map(|r| pg_cell(r, 0)).collect())
+}
+
+/// EXPLAIN as text and JSON. `analyze` (PostgreSQL) runs the statement inside a transaction
+/// that is always rolled back, so it may change nothing.
+pub async fn explain(pool: &DbPool, sql: &str, database: Option<&str>, analyze: bool) -> AppResult<ExplainOutput> {
+    let sql = sql.trim().trim_end_matches(';').trim();
+    match pool {
+        DbPool::Pg(p) => {
+            let mut conn = p.acquire().await?;
+            if analyze {
+                sqlx::raw_sql("BEGIN").execute(&mut *conn).await?;
+                let res = pg_column(&mut conn, &format!("EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON) {sql}")).await;
+                if sqlx::raw_sql("ROLLBACK").execute(&mut *conn).await.is_err() {
+                    drop(conn.detach());
+                }
+                let json = res?.concat();
+                let text = serde_json::from_str::<serde_json::Value>(&json)
+                    .ok()
+                    .and_then(|v| serde_json::to_string_pretty(&v).ok())
+                    .unwrap_or_else(|| json.clone());
+                return Ok(ExplainOutput { text, json: Some(json), analyzed: true });
+            }
+            let ver: i32 = sqlx::query_scalar("select current_setting('server_version_num')::int").fetch_one(&mut *conn).await?;
+            if has_params(sql) && ver >= 160000 {
+                let text = pg_generic_column(&mut conn, &format!("EXPLAIN (GENERIC_PLAN) {sql}")).await?.join("\n");
+                let json = pg_generic_column(&mut conn, &format!("EXPLAIN (GENERIC_PLAN, FORMAT JSON) {sql}")).await.ok().map(|r| r.concat());
+                return Ok(ExplainOutput { text, json, analyzed: false });
+            }
+            let text = pg_column(&mut conn, &format!("EXPLAIN {sql}")).await?.join("\n");
+            let json = pg_column(&mut conn, &format!("EXPLAIN (FORMAT JSON) {sql}")).await.ok().map(|r| r.concat());
+            Ok(ExplainOutput { text, json, analyzed: false })
         }
-    };
-    let lines: Vec<String> = rows.into_iter().filter_map(|r| r.into_iter().next().flatten()).collect();
-    Ok(match kind {
-        DbKind::Postgres => lines.join("\n"),
-        DbKind::Mysql => lines.join("\n\n"),
-    })
+        DbPool::My(p) => {
+            if analyze {
+                return Err(msg("EXPLAIN ANALYZE is available on PostgreSQL connections"));
+            }
+            let mut conn = mysql_conn(p, database).await?;
+            let col = |rows: Vec<MySqlRow>| rows.iter().filter_map(|r| my_cell(r, 0)).collect::<Vec<_>>();
+            // FORMAT=TREE is MySQL 8.0.16+; MariaDB and older servers get the JSON plan as text
+            let json = sqlx::query(AssertSqlSafe(format!("EXPLAIN FORMAT=JSON {sql}"))).fetch_all(&mut *conn).await.map(col).ok().map(|r| r.concat());
+            let text = match sqlx::query(AssertSqlSafe(format!("EXPLAIN FORMAT=TREE {sql}"))).fetch_all(&mut *conn).await {
+                Ok(rows) => col(rows).join("\n\n"),
+                Err(e) => json.clone().ok_or(e)?,
+            };
+            Ok(ExplainOutput { text, json, analyzed: false })
+        }
+    }
 }
 
 

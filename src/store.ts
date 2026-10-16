@@ -13,6 +13,7 @@ import {
   type Project,
   type QueryOutput,
   type DbKind,
+  type ExplainOutput,
   type ResultSet,
   type SchemaTree,
   type ServerInfo,
@@ -91,7 +92,7 @@ export interface TabRuntime {
   output?: QueryOutput;
   activeSet: number;
   error?: string;
-  explain?: string;
+  explain?: ExplainOutput & { sql: string };
   explaining?: boolean;
   messages: Message[];
   resultTab: ResultTab;
@@ -328,7 +329,8 @@ interface State {
   updateTab: (id: string, patch: Partial<EditorTab>) => void;
   runTab: (id: string, sql?: string, serverSort?: ServerSort) => Promise<void>;
   cancelTab: (id: string) => Promise<void>;
-  explainTab: (id: string, sql: string) => Promise<void>;
+  /** `analyze`: EXPLAIN ANALYZE (PostgreSQL), rolled back; data changes ask first */
+  explainTab: (id: string, sql: string, analyze?: boolean) => Promise<void>;
   patchRuntime: (id: string, patch: Partial<TabRuntime>) => void;
 
   // favorites
@@ -708,14 +710,29 @@ export const useStore = create<State>()(
           }
         },
 
-        explainTab: async (tabId, sql) => {
+        explainTab: async (tabId, sql, analyze = false) => {
           const tab = get().tabs.find((t) => t.id === tabId);
           if (!tab?.connId || !sql.trim()) return;
           if (get().conn[tab.connId]?.status !== "connected" && !(await get().connectTo(tab.connId))) return;
+          if (analyze) {
+            // ANALYZE executes the statement; changes are rolled back, but ask first
+            const cfg = get().connections.find((c) => c.id === baseId(tab.connId));
+            const writes = writeStatements(splitStatements(sql, cfg?.kind ?? "postgres").map((st) => st.text));
+            if (writes.length > 0) {
+              const prod = isProduction(cfg);
+              const ok = await ask(
+                `EXPLAIN ANALYZE really executes this statement${prod ? ` on PRODUCTION (${cfg!.name})` : ""}, inside a transaction that is rolled back afterwards, so no data is changed. It still takes locks and runs as long as the statement does.
+
+${writes[0].slice(0, 200)}`,
+                { title: prod ? "Production database" : "Explain Analyze", kind: "warning", okLabel: prod ? "Run on production" : "Run and roll back", cancelLabel: "Cancel" },
+              );
+              if (!ok) return;
+            }
+          }
           get().patchRuntime(tabId, { explaining: true, resultTab: "explain" });
           try {
-            const explain = await api.explainQuery(tab.connId, sql, tabDatabase(tab));
-            get().patchRuntime(tabId, { explain, explaining: false });
+            const explain = await api.explainQuery(tab.connId, sql, tabDatabase(tab), analyze);
+            get().patchRuntime(tabId, { explain: { ...explain, sql }, explaining: false });
           } catch (e) {
             get().patchRuntime(tabId, { explain: undefined, explaining: false, resultTab: "messages" });
             addMessage(tabId, "error", errorText(e));

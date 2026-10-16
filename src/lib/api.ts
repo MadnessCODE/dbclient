@@ -257,7 +257,12 @@ export const api = {
   queryDatabases: (id: string, databases: string[], sql: string) => invoke<DatabaseRows[]>("query_databases", { id, databases, sql }),
   /** PostgreSQL server connection: statement batches per database, each in one transaction */
   executeInDatabases: (id: string, batches: { database: string; statements: string[] }[]) => invoke<void>("execute_in_databases", { id, batches }),
-  explainQuery: (connId: string, sql: string, database?: string) => invoke<string>("explain_query", { connId, sql, database: database ?? null }),
+  /** `analyze` (PostgreSQL): runs the statement in a transaction that is rolled back */
+  explainQuery: (connId: string, sql: string, database?: string, analyze = false) =>
+    invoke<ExplainOutput>("explain_query", { connId, sql, database: database ?? null, analyze }),
+  tableQueries: (id: string, schema: string, table: string) => invoke<TableQueries>("table_queries", { id, schema, table }),
+  whatIfIndex: (id: string, schema: string, table: string, columns: string[], queryIds: string[]) =>
+    invoke<WhatIf>("what_if_index", { id, schema, table, columns, queryIds }),
   writeTextFile: (path: string, contents: string) => invoke<void>("write_text_file", { path, contents }),
   exportXlsx: (path: string, columns: { name: string; kind: string }[], rows: Cell[][], options: { sheet: string; header: boolean; nullAs: string }) =>
     invoke<void>("export_xlsx", { path, columns, rows, options }),
@@ -372,6 +377,49 @@ export interface DumpInfo {
   detected: string | null;
   /** pg_dump custom format archive, e.g. "pg_dump 16.4 · gzip · 12 tables" */
   archive: string | null;
+}
+
+export interface ExplainOutput {
+  /** Plan as text (after ANALYZE: the JSON plan, indented) */
+  text: string;
+  /** The plan as JSON (EXPLAIN FORMAT JSON), for the visual plan */
+  json: string | null;
+  analyzed: boolean;
+}
+
+/** Table Doctor: slowest statements on a table (see queries.rs). */
+export interface TableQueries {
+  unavailable: { title: string; steps: string[] } | null;
+  queries: SlowQuery[];
+  suggestions: { finding: Finding; columns: string[]; queryIds: string[] }[];
+  hypopg: boolean;
+  notes: string[];
+}
+
+export interface SlowQuery {
+  id: string;
+  /** Normalized: values replaced by $1 / ? */
+  query: string;
+  /** MySQL: one real statement with values */
+  sample: string | null;
+  calls: number;
+  totalMs: number;
+  meanMs: number;
+  rows: number;
+}
+
+export interface WhatIf {
+  index: string;
+  results: {
+    queryId: string;
+    query: string;
+    beforeCost: number | null;
+    afterCost: number | null;
+    beforeScan: string | null;
+    afterScan: string | null;
+    usesIndex: boolean;
+    error: string | null;
+  }[];
 }
 
 /** Table Doctor result (see doctor.rs). */

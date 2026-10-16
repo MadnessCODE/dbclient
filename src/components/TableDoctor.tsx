@@ -19,6 +19,7 @@ import {
 import type { Finding, IndexUsage, Severity, TableHealth } from "../lib/api";
 import { analyzeTab, confirmFix, openDoctor, refKey, scoreOf, setIgnored, splitIgnored, useDoctor, type DoctorRef } from "../lib/doctor";
 import { ColumnAnalysis } from "./ColumnAnalysis";
+import { SlowQueries } from "./SlowQueries";
 import { useImports } from "../lib/importJobs";
 import { baseId, dbOf } from "../lib/connIds";
 import { useStore, type EditorTab } from "../store";
@@ -110,6 +111,7 @@ export function TableDoctor({ tab }: { tab: EditorTab }) {
             <Indexes indexes={h.indexes} usageSecs={h.stats.usageSecs} mysql={cfg?.kind === "mysql"} />
             <Space h={h} mysql={cfg?.kind === "mysql"} />
           </div>
+          <SlowQueries r={ref} kind={cfg?.kind ?? "postgres"} database={tab.database} version={res?.at} />
           <ColumnAnalysis r={ref} columns={h.columns} kind={cfg?.kind ?? "postgres"} />
           {h.notes.length > 0 && (
             <div className="space-y-1">
