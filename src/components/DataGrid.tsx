@@ -16,6 +16,8 @@ import {
   Clock,
   Copy,
   Eraser,
+  Filter,
+  FilterX,
   Link2,
   MoveHorizontal,
   Lock,
@@ -32,8 +34,11 @@ import { isProduction } from "../lib/connStyle";
 import { buildDml, editTargetOf, emptyPending, pendingCount, type EditTarget, type PendingEdits, type RowKey } from "../lib/edit";
 import { quoteIdent } from "../lib/sql";
 import { editorDb, editorName } from "../lib/treeActions";
-import { exportableQuery, gridViews, sortedQuery, type SortKey } from "../lib/export";
-import { useStore, type MenuEntry } from "../store";
+import { exportableQuery, gridViews, type SortKey } from "../lib/export";
+import { canInject, filterCondition, filtersActive, ident, pgAsText, topValuesQuery, viewQuery, type ColumnFilter, type FilterOp, type GridFilters } from "../lib/filter";
+import { setEditorText } from "../lib/editorBridge";
+import { tabDatabase, useStore, type MenuEntry } from "../store";
+import { FilterBar, FilterPopover, type FilterColumn, type TopValue } from "./FilterBar";
 import { CellEditor } from "./CellEditor";
 import { BulkSetDialog, ValueModal } from "./ValueModal";
 import { Button, cx, IconButton, Modal, Spinner, MOD } from "./ui";
@@ -99,8 +104,9 @@ export function DataGrid({ rs, connId, kind, tabId }: { rs: ResultSet; connId: s
   // the grid remounts per query, so a database sort comes back through the runtime
   const [ran] = useState(() => {
     const rt = useStore.getState().runtime[tabId];
-    return { base: rt?.serverSort?.base ?? rt?.lastSql, sort: rt?.serverSort?.keys ?? [] };
+    return { base: rt?.filters?.base ?? rt?.serverSort?.base ?? rt?.lastSql, sort: rt?.serverSort?.keys ?? [], filters: rt?.filters };
   });
+  const [filterPop, setFilterPop] = useState<{ col: number; filter: ColumnFilter; anchor: DOMRect; isNew: boolean } | null>(null);
   const [sort, setSort] = useState<SortKey[]>(ran.sort);
   const [pending, setPending] = useState<PendingEdits>(emptyPending);
   const [selection, setSelection] = useState<Set<string>>(new Set());
@@ -157,7 +163,7 @@ export function DataGrid({ rs, connId, kind, tabId }: { rs: ResultSet; connId: s
   // with a LIMIT or the Max rows cap only part of the data is loaded: sort in the database
   const sortOnServer = useMemo(() => {
     const q = connId ? exportableQuery(ran.base, kind) : null;
-    return !!q && (!!q.limit || rs.truncated || ran.sort.length > 0);
+    return !!q && (!!q.limit || rs.truncated || ran.sort.length > 0 || filtersActive(ran.filters));
   }, [connId, ran, kind, rs.truncated]);
   const order = useMemo(() => (sortOnServer ? rs.rows.map((_, i) => i) : sortIndexes(rs.rows, sort, numeric)), [sortOnServer, rs.rows, sort, numeric]);
   const display: DisplayRow[] = useMemo(
@@ -478,6 +484,44 @@ export function DataGrid({ rs, connId, kind, tabId }: { rs: ResultSet; connId: s
     const items: MenuEntry[] = [
       { label: colEditable(c) ? "View / edit value…" : "View value…", icon: <PencilLine />, onClick: () => setModal({ r, c }) },
     ];
+    const cellValue = display[r] ? valueAt(display[r], c) : undefined;
+    if (filterable && display[r]?.existing !== null && cellValue !== undefined) {
+      const name = rs.columns[c].name;
+      const short = cellValue === null ? "NULL" : cellValue.length > 24 ? `${cellValue.slice(0, 24)}…` : cellValue;
+      const ordered = kinds[c] === "number" || kinds[c] === "date" || kinds[c] === "datetime" || kinds[c] === "time" || kinds[c] === "year";
+      const anchor = new DOMRect(e.clientX, e.clientY, 0, 0);
+      items.push(
+        "sep",
+        {
+          label: cellValue === null ? `Filter: ${name} is null` : `Filter: ${name} = ${short}`,
+          icon: <Filter />,
+          shortcut: "Alt+Click",
+          onClick: () => quickFilter(c, "eq", cellValue),
+        },
+        {
+          label: "Filter",
+          icon: <Filter />,
+          children: [
+            ...(cellValue !== null
+              ? [
+                  { label: `${name} ≠ ${short}`, onClick: () => quickFilter(c, "ne", cellValue) },
+                  ...(ordered
+                    ? [
+                        { label: `${name} > ${short}`, onClick: () => quickFilter(c, "gt", cellValue) },
+                        { label: `${name} < ${short}`, onClick: () => quickFilter(c, "lt", cellValue) },
+                      ]
+                    : []),
+                ]
+              : []),
+            { label: `${name} is null`, onClick: () => quickFilter(c, "null", null) },
+            { label: `${name} is not null`, onClick: () => quickFilter(c, "notnull", null) },
+            "sep",
+            { label: "Filter by column…", icon: <Filter />, onClick: () => openFilter(c, anchor) },
+          ],
+        },
+      );
+      if (filtersActive(filters)) items.push({ label: "Clear filters", icon: <FilterX />, onClick: () => applyFilters({ ...filters, items: [], where: "" }) });
+    }
     if (editable) {
       items.push(
         { label: n > 1 ? `Set value for ${n} cells…` : "Set value…", icon: <PencilLine />, onClick: () => setBulk(true), disabled: !cells.some((x) => colEditable(x.c)) },
@@ -505,6 +549,12 @@ export function DataGrid({ rs, connId, kind, tabId }: { rs: ResultSet; connId: s
       { label: "Sort ascending", icon: <ArrowUp />, onClick: () => applySort([{ col: c, dir: "asc" }]) },
       { label: "Sort descending", icon: <ArrowDown />, onClick: () => applySort([{ col: c, dir: "desc" }]) },
       { label: "Clear sorting", disabled: !sort.length, onClick: () => applySort([]) },
+      ...(filterable
+        ? (["sep", { label: "Filter by column…", icon: <Filter />, onClick: () => openFilter(c, new DOMRect(e.clientX, e.clientY, 0, 0)) }] as MenuEntry[])
+        : []),
+      ...(filters?.items.some((f) => f.col === rs.columns[c].name)
+        ? [{ label: "Remove filters on this column", icon: <FilterX />, onClick: () => applyFilters({ ...filters, items: filters.items.filter((f) => f.col !== rs.columns[c].name) }) }]
+        : []),
       "sep",
       { label: "Fit width to content", icon: <MoveHorizontal />, onClick: () => fitColumn(c) },
       {
@@ -517,18 +567,112 @@ export function DataGrid({ rs, connId, kind, tabId }: { rs: ResultSet; connId: s
       { label: "Copy column name", icon: <ClipboardCopy />, onClick: () => void navigator.clipboard.writeText(rs.columns[c].name) },
     ]);
 
+  const colNames = useMemo(() => rs.columns.map((c) => c.name), [rs.columns]);
+
+  /** Re-runs the base query with these filters and sort keys. */
+  const rerun = async (filters: GridFilters | undefined, keys: SortKey[], what: string) => {
+    if (!ran.base) return;
+    const sql = viewQuery(ran.base, kind, filters, keys, colNames);
+    if (!sql) return;
+    if (hasChanges && !(await ask(`${what} re-runs the query and discards unsaved changes. Continue?`, { title: "Unsaved changes", kind: "warning" }))) return;
+    void useStore.getState().runTab(tabId, sql, { serverSort: keys.length ? { base: ran.base, keys } : undefined, filters: filtersActive(filters) ? filters : undefined });
+  };
+
   const applySort = async (keys: SortKey[]) => {
-    if (sortOnServer && ran.base) {
-      const sql = sortedQuery(ran.base, kind, keys);
-      if (!sql) return;
-      if (hasChanges && !(await ask("Sorting re-runs the query and discards unsaved changes. Continue?", { title: "Unsaved changes", kind: "warning" }))) return;
-      void useStore.getState().runTab(tabId, sql, keys.length ? { base: ran.base, keys } : undefined);
-      return;
-    }
+    if (sortOnServer && ran.base) return rerun(ran.filters, keys, "Sorting");
     setSort(keys);
     setPage(0);
     clearSelection();
   };
+
+  const filterable = !!connId && !!exportableQuery(ran.base, kind);
+  const filterCols: FilterColumn[] = useMemo(
+    () => rs.columns.map((c, i) => ({ name: c.name, kind: kinds[i], typeName: colMap[i]?.columnType ?? c.typeName, ts: tsUnits[i], enumValues: colMap[i]?.enumValues ?? undefined })),
+    [rs.columns, kinds, colMap, tsUnits],
+  );
+  const filters = ran.filters;
+
+  const applyFilters = (next: GridFilters) => void rerun({ ...next, base: ran.base! }, sort, "Filtering");
+
+  const newFilter = (c: number, op: FilterOp, extra: Partial<ColumnFilter> = {}): ColumnFilter => ({
+    id: crypto.randomUUID(),
+    col: rs.columns[c].name,
+    origin: rs.columns[c].origin?.column,
+    kind: kinds[c],
+    typeName: rs.columns[c].typeName,
+    ts: tsUnits[c],
+    op,
+    ...extra,
+  });
+
+  /** Adds a filter; one with the same column and operator is replaced. */
+  const addFilter = (f: ColumnFilter) => {
+    const items = filters?.items ?? [];
+    const same = items.find((x) => x.id === f.id || (x.col === f.col && x.op === f.op));
+    const next = same ? items.map((x) => (x === same ? { ...f, id: same.id } : x)) : [...items, f];
+    applyFilters({ base: ran.base!, join: filters?.join ?? "and", where: filters?.where ?? "", items: next });
+  };
+
+  /** Quick filter from a cell value. */
+  const quickFilter = (c: number, op: "eq" | "ne" | "gt" | "lt" | "null" | "notnull", value: Cell | undefined) => {
+    if (value === undefined) return;
+    if (value === null || op === "null" || op === "notnull") return addFilter(newFilter(c, value === null ? (op === "ne" || op === "notnull" ? "notnull" : "null") : op));
+    if (kinds[c] === "bool" && (op === "eq" || op === "ne")) return addFilter(newFilter(c, isTruthy(value) === (op === "eq") ? "true" : "false"));
+    addFilter(newFilter(c, op, { value }));
+  };
+
+  const openFilter = (c: number, anchor: DOMRect, preset?: ColumnFilter) => {
+    const existing = preset ?? filters?.items.find((x) => x.col === rs.columns[c].name);
+    const def: FilterOp = kinds[c] === "text" ? "contains" : kinds[c] === "bool" ? "true" : kinds[c] === "json" ? "contains" : kinds[c] === "binary" ? "notnull" : tsUnits[c] ? "gt" : "eq";
+    setFilterPop({ col: c, filter: existing ?? newFilter(c, def), anchor, isNew: !existing });
+  };
+
+  const loadTop = useCallback(
+    async (c: number): Promise<TopValue[]> => {
+      const sql = ran.base && topValuesQuery(ran.base, kind, rs.columns[c].name, pgAsText(kind, { kind: kinds[c], typeName: rs.columns[c].typeName }));
+      if (!sql || !connId) return [];
+      const tab = useStore.getState().tabs.find((t) => t.id === tabId);
+      const qid = crypto.randomUUID();
+      // a big table may take too long to count: give up after a few seconds
+      const timer = setTimeout(() => void api.cancelQuery(qid).catch(() => {}), 4000);
+      try {
+        const out = await api.runQuery(connId, qid, sql, 10, tab ? tabDatabase(tab) : undefined);
+        const set = out.resultSets.find((x) => x.returnsRows);
+        return (set?.rows ?? []).map((r) => ({ value: r[0], n: r[1] ?? "0" }));
+      } finally {
+        clearTimeout(timer);
+      }
+    },
+    [ran.base, kind, rs.columns, kinds, connId, tabId],
+  );
+  const popLoadTop = useMemo(
+    () => (filterPop && !["json", "binary"].includes(kinds[filterPop.col]) ? () => loadTop(filterPop.col) : undefined),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [filterPop?.col, filterPop?.filter.id, loadTop],
+  );
+
+  /** Writes the filtered (and sorted) query into the editor and runs it from there. */
+  const filtersToEditor = () => {
+    const st = useStore.getState();
+    const tab = st.tabs.find((t) => t.id === tabId);
+    if (!tab || !ran.base) return;
+    const sql = viewQuery(ran.base, kind, filters, sort, colNames);
+    if (!sql) return;
+    const base = ran.base.trim();
+    const at = tab.sql.indexOf(base);
+    const text = at >= 0 ? tab.sql.slice(0, at) + sql + (/;\s*$/.test(base) ? ";" : "") + tab.sql.slice(at + base.length) : `${tab.sql.trimEnd()}\n\n${sql};\n`;
+    if (!setEditorText(tabId, text)) st.updateTab(tabId, { sql: text });
+    // the editor has them now: not a filtered re-run, and nothing to restore
+    st.patchRuntime(tabId, { filters: undefined, serverSort: undefined });
+    void st.runTab(tabId, sql);
+  };
+
+  const generated = useMemo(() => {
+    if (!filtersActive(filters) || !ran.base) return null;
+    return filterCondition(kind, filters, canInject(kind, ran.base, filters));
+  }, [filters, ran.base, kind]);
+  const elapsed = useStore((s) => s.runtime[tabId]?.output?.elapsedMs);
+  const filterStatus = `${rs.rows.length.toLocaleString()}${rs.truncated ? "+" : ""} rows${elapsed !== undefined ? ` · ${Math.round(elapsed)} ms` : ""}`;
 
   const toggleSort = (col: number, multi: boolean) => {
     const existing = sort.find((s) => s.col === col);
@@ -541,7 +685,42 @@ export function DataGrid({ rs, connId, kind, tabId }: { rs: ResultSet; connId: s
 
   return (
     <>
-      <div className="mx-3 mb-1.5 flex min-h-7 items-center gap-3 text-[12px] text-fg-2">
+      {filterable && (
+        <FilterBar
+          filters={filters}
+          columns={filterCols}
+          generated={generated}
+          status={filterStatus}
+          onChange={applyFilters}
+          onEdit={(f, anchor) => {
+            const c = rs.columns.findIndex((x) => x.name === f.col);
+            if (c >= 0) openFilter(c, anchor, f);
+          }}
+          onAdd={(c, anchor) => openFilter(c, anchor)}
+          onToEditor={filtersToEditor}
+          quote={(n) => ident(n, kind)}
+        />
+      )}
+      {filterPop && (
+        <FilterPopover
+          key={`${filterPop.col}-${filterPop.filter.id}`}
+          column={filterCols[filterPop.col]}
+          initial={filterPop.filter}
+          anchor={filterPop.anchor}
+          isNew={filterPop.isNew}
+          loadTop={popLoadTop}
+          onApply={(f) => {
+            setFilterPop(null);
+            addFilter(f);
+          }}
+          onRemove={() => {
+            setFilterPop(null);
+            if (filters) applyFilters({ ...filters, items: filters.items.filter((x) => x.id !== filterPop.filter.id) });
+          }}
+          onClose={() => setFilterPop(null)}
+        />
+      )}
+      <div className={cx("mx-3 mb-1.5 flex min-h-7 items-center gap-3 text-[12px] text-fg-2", editable && !sort.length && !hasChanges && "hidden")}>
         {!editable && (
           <span className="flex cursor-help items-center gap-1.5 text-muted" title={target}>
             <Lock size={12} /> {target.startsWith("Loading") ? target : "Read-only"}
@@ -587,6 +766,7 @@ export function DataGrid({ rs, connId, kind, tabId }: { rs: ResultSet; connId: s
             {rs.columns.map((c, i) => {
               const si = sort.findIndex((s) => s.col === i);
               const s = sort[si];
+              const filtered = !!filters?.items.some((f) => f.col === c.name);
               return (
                 <div
                   key={i}
@@ -594,7 +774,7 @@ export function DataGrid({ rs, connId, kind, tabId }: { rs: ResultSet; connId: s
                   onClick={(e) => !resized.current && toggleSort(i, e.shiftKey)}
                   onContextMenu={(e) => headerMenu(e, i)}
                   title="Click to sort · Shift+click to add a sort column · drag the edge to resize · right-click for more"
-                  className={cx("relative flex shrink-0 cursor-pointer flex-col justify-center border-l border-line/60 px-3 select-none hover:bg-hover", s && "bg-accent-soft")}
+                  className={cx("group relative flex shrink-0 cursor-pointer flex-col justify-center border-l border-line/60 px-3 select-none hover:bg-hover", s && "bg-accent-soft")}
                 >
                   <span
                     title="Drag to resize · double-click to fit"
@@ -611,6 +791,21 @@ export function DataGrid({ rs, connId, kind, tabId }: { rs: ResultSet; connId: s
                     <span className="truncate" title={c.origin ? `${c.origin.table}.${c.origin.column}` : c.name}>
                       {c.name}
                     </span>
+                    {filterable && (
+                      <button
+                        title={filtered ? "Filtered · click to edit the filter" : "Filter by this column"}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          openFilter(i, e.currentTarget.getBoundingClientRect());
+                        }}
+                        className={cx(
+                          "flex h-5 w-5 shrink-0 items-center justify-center rounded hover:bg-accent-soft",
+                          filtered ? "text-accent" : "text-muted opacity-0 group-hover:opacity-100",
+                        )}
+                      >
+                        <Filter size={12} fill={filtered ? "currentColor" : "none"} />
+                      </button>
+                    )}
                     {s && (
                       <span className="flex shrink-0 items-center text-accent">
                         {s.dir === "asc" ? <ArrowUp size={13} /> : <ArrowDown size={13} />}
@@ -686,6 +881,7 @@ export function DataGrid({ rs, connId, kind, tabId }: { rs: ResultSet; connId: s
                         onMouseDown={(e) => {
                           if (e.button !== 0 || isEditing) return;
                           e.preventDefault(); // no text selection while dragging
+                          if (e.altKey && filterable && row.existing !== null) return quickFilter(ci, "eq", value);
                           scrollRef.current?.focus();
                           drag.current = "cells";
                           select(r, ci, e.shiftKey, e.ctrlKey || e.metaKey);
@@ -821,7 +1017,7 @@ export function DataGrid({ rs, connId, kind, tabId }: { rs: ResultSet; connId: s
             setSaveSql(null);
             setPending(emptyPending());
             const rt = useStore.getState().runtime[tabId];
-            if (rt?.lastSql) void useStore.getState().runTab(tabId, rt.lastSql, rt.serverSort);
+            if (rt?.lastSql) void useStore.getState().runTab(tabId, rt.lastSql, { serverSort: rt.serverSort, filters: rt.filters });
           }}
         />
       )}

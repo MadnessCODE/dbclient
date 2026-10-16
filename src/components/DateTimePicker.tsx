@@ -106,6 +106,7 @@ export function DateTimePicker({
   withTz,
   value,
   allowInfinity = false,
+  applyUnchanged = false,
   anchor,
   onApply,
   onCancel,
@@ -115,6 +116,8 @@ export function DateTimePicker({
   value: string | null;
   /** Postgres date/timestamp: offer -infinity / +infinity */
   allowInfinity?: boolean;
+  /** Apply / Enter return the shown value even when it wasn't changed (filters start from "now") */
+  applyUnchanged?: boolean;
   /** Anchor element */
   anchor: HTMLElement | null;
   onApply: (v: string | null) => void;
@@ -174,8 +177,8 @@ export function DateTimePicker({
     });
   };
 
-  const apply = () => {
-    if (!dirty) return onCancel();
+  const apply = (confirmed = false) => {
+    if (!dirty && !(confirmed && applyUnchanged)) return onCancel();
     if (allowInfinity && INF_RE.test(text.trim())) {
       const inf = text.trim().toLowerCase().replace(/^\+/, "");
       return inf === (value ?? "").trim().toLowerCase() ? onCancel() : onApply(inf);
@@ -232,7 +235,7 @@ export function DateTimePicker({
     e.stopPropagation();
     if (e.key === "Enter") {
       e.preventDefault();
-      apply();
+      apply(true);
     } else if (e.key === "Escape") {
       e.preventDefault();
       onCancel();
@@ -399,7 +402,7 @@ export function DateTimePicker({
         <button onClick={onCancel} className="rounded-md px-3 py-1.5 text-[12.5px] text-fg-2 hover:bg-hover">
           Cancel
         </button>
-        <button onClick={apply} className="rounded-md bg-accent px-3 py-1.5 text-[12.5px] font-medium text-white hover:bg-accent-hover">
+        <button onClick={() => apply(true)} className="rounded-md bg-accent px-3 py-1.5 text-[12.5px] font-medium text-white hover:bg-accent-hover">
           Apply
         </button>
       </div>
