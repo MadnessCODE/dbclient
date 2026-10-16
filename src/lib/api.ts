@@ -389,10 +389,12 @@ export interface ExplainOutput {
 
 /** Table Doctor: slowest statements on a table (see queries.rs). */
 export interface TableQueries {
-  unavailable: { title: string; steps: string[] } | null;
+  unavailable: { title: string; steps: string[]; enable: { label: string; sql: string; note: string } | null } | null;
   queries: SlowQuery[];
   suggestions: { finding: Finding; columns: string[]; queryIds: string[] }[];
   hypopg: boolean;
+  /** hypopg's package is on the server, not yet created in this database */
+  hypopgAvailable: boolean;
   notes: string[];
 }
 

@@ -1,9 +1,9 @@
 // Table Doctor: the slowest statements on the table, index suggestions from their plans, and a
 // hypopg "what if" check before creating an index.
 import { useEffect, useState } from "react";
-import { ChevronRight, FlaskConical, Gauge, Info, RefreshCw, TriangleAlert } from "lucide-react";
+import { ChevronRight, FlaskConical, Gauge, Info, Power, RefreshCw, TriangleAlert } from "lucide-react";
 import { api, errorText, type SlowQuery, type TableQueries, type WhatIf } from "../lib/api";
-import { refKey, splitIgnored, type DoctorRef } from "../lib/doctor";
+import { confirmSetup, refKey, splitIgnored, type DoctorRef } from "../lib/doctor";
 import { useStore } from "../store";
 import { FindingRow, IgnoredList } from "./TableDoctor";
 import { Button, cx, IconButton, Spinner } from "./ui";
@@ -79,6 +79,23 @@ export function SlowQueries({ r, kind, database, version }: { r: DoctorRef; kind
                 </li>
               ))}
             </ol>
+            {data.unavailable.enable && (
+              <div className="mt-3 space-y-2">
+                <pre className="selectable overflow-x-auto rounded-md border border-line-strong bg-bg/50 p-2.5 font-mono text-[12px] whitespace-pre-wrap text-fg">
+                  {data.unavailable.enable.sql}
+                </pre>
+                <p className="text-[12px] text-fg-2">{data.unavailable.enable.note}</p>
+                <Button
+                  variant="primary"
+                  onClick={() => {
+                    const en = data.unavailable!.enable!;
+                    confirmSetup(r, data.unavailable!.title, en.label, en.sql, en.note);
+                  }}
+                >
+                  <Power size={14} /> {data.unavailable.enable.label}…
+                </Button>
+              </div>
+            )}
           </div>
         )}
 
@@ -123,7 +140,7 @@ export function SlowQueries({ r, kind, database, version }: { r: DoctorRef; kind
                       <div key={f.id}>
                         <FindingRow r={r} f={f} database={database} open={!!open[f.id]} toggle={() => setOpen((o) => ({ ...o, [f.id]: !o[f.id] }))} />
                         {open[f.id] && kind === "postgres" && (
-                          <WhatIfPanel r={r} columns={s.columns} queryIds={s.queryIds} hypopg={data.hypopg} />
+                          <WhatIfPanel r={r} columns={s.columns} queryIds={s.queryIds} hypopg={data.hypopg} available={data.hypopgAvailable} />
                         )}
                       </div>
                     );
@@ -153,17 +170,30 @@ export function SlowQueries({ r, kind, database, version }: { r: DoctorRef; kind
 }
 
 /** hypopg: plan the statements with the index as if it existed; nothing is created. */
-function WhatIfPanel({ r, columns, queryIds, hypopg }: { r: DoctorRef; columns: string[]; queryIds: string[]; hypopg: boolean }) {
+function WhatIfPanel({ r, columns, queryIds, hypopg, available }: { r: DoctorRef; columns: string[]; queryIds: string[]; hypopg: boolean; available: boolean }) {
   const [res, setRes] = useState<WhatIf | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   if (!hypopg) {
     return (
-      <p className="flex items-start gap-2 border-t border-line bg-panel-2 px-4 py-2.5 pl-[46px] text-[12px] text-muted">
-        <FlaskConical size={13} className="mt-0.5 shrink-0" />
-        Install the hypopg extension (CREATE EXTENSION hypopg) to see how much faster these queries would plan with this index, before creating it.
-      </p>
+      <div className="flex items-center gap-3 border-t border-line bg-panel-2 px-4 py-2.5 pl-[46px] text-[12px] text-muted">
+        <FlaskConical size={13} className="shrink-0" />
+        <span className="flex-1">
+          {available
+            ? "The hypopg extension shows how much faster these queries would plan with this index, before creating it."
+            : "With the hypopg extension (its package installed on the server, then CREATE EXTENSION hypopg) you could see how much faster these queries would plan with this index, before creating it."}
+        </span>
+        {available && (
+          <Button
+            onClick={() =>
+              confirmSetup(r, "Install hypopg", "Install hypopg", "CREATE EXTENSION IF NOT EXISTS hypopg;", "Adds hypothetical indexes to this database; they live only in your session and never touch tables.")
+            }
+          >
+            <FlaskConical size={13} /> Install hypopg…
+          </Button>
+        )}
+      </div>
     );
   }
   const run = async () => {

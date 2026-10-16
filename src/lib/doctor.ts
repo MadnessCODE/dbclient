@@ -228,6 +228,11 @@ async function runFix(r: DoctorRef, f: Finding, sql: string) {
   if (useDoctor.getState().schemas[schemaKey(r.connId, r.schema)]) loadSchema(r.connId, r.schema, useStore.getState().conn[r.connId]?.schema).catch(() => undefined);
 }
 
+/** Setup SQL (enable statistics, install an extension) through the same confirmation as fixes. */
+export function confirmSetup(r: DoctorRef, title: string, label: string, sql: string, note: string) {
+  confirmFix(r, { id: `setup:${label}`, severity: "info", title, detail: "", evidence: [], fix: { label, sql, note, long: false } });
+}
+
 /** ANALYZE for a table without column statistics, through the same confirmation. */
 export function confirmAnalyze(r: DoctorRef, kind: "postgres" | "mysql") {
   const q = (n: string) => (kind === "mysql" ? `\`${n.replace(/`/g, "``")}\`` : `"${n.replace(/"/g, '""')}"`);

@@ -27,6 +27,8 @@ pub struct TableQueries {
     pub suggestions: Vec<Suggestion>,
     /// hypopg is installed: "what if" checks are possible
     pub hypopg: bool,
+    /// hypopg is not installed, but its package is on the server
+    pub hypopg_available: bool,
     pub notes: Vec<String>,
 }
 
@@ -34,6 +36,15 @@ pub struct TableQueries {
 pub struct Unavailable {
     pub title: String,
     pub steps: Vec<String>,
+    /// SQL that does what can be done from a connection, run through the usual fix confirmation
+    pub enable: Option<Enable>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct Enable {
+    pub label: String,
+    pub sql: String,
+    pub note: String,
 }
 
 #[derive(Debug, Serialize)]
@@ -315,7 +326,10 @@ async fn pg_queries(pool: &DbPool, schema: &str, table: &str) -> AppResult<Table
                     exists (select 1 from pg_available_extensions where name = 'pg_stat_statements'),
                     current_setting('shared_preload_libraries'),
                     exists (select 1 from pg_extension where extname = 'hypopg'),
-                    pg_has_role(current_user, 'pg_read_all_stats', 'MEMBER') or (select rolsuper from pg_roles where rolname = current_user)",
+                    pg_has_role(current_user, 'pg_read_all_stats', 'MEMBER') or (select rolsuper from pg_roles where rolname = current_user),
+                    exists (select 1 from pg_available_extensions where name = 'hypopg'),
+                    (select rolsuper from pg_roles where rolname = current_user),
+                    (select pending_restart from pg_settings where name = 'shared_preload_libraries')",
         )
         .await?;
     let g = g.first().ok_or_else(|| msg("Server returned no rows"))?;
@@ -325,6 +339,9 @@ async fn pg_queries(pool: &DbPool, schema: &str, table: &str) -> AppResult<Table
     let preloaded = text(&g[3]).split(',').any(|l| l.trim() == "pg_stat_statements");
     let hypopg = text(&g[4]) == "true";
     let all_stats = text(&g[5]) == "true";
+    let hypopg_available = !hypopg && text(&g[6]) == "true";
+    let superuser = text(&g[7]) == "true";
+    let pending_restart = text(&g[8]) == "true";
 
     if !installed || !preloaded {
         let mut steps = Vec::new();
@@ -338,11 +355,34 @@ async fn pg_queries(pool: &DbPool, schema: &str, table: &str) -> AppResult<Table
             steps.push("In this database run: CREATE EXTENSION pg_stat_statements;".into());
         }
         steps.push("Use the application for a while, then open Table Doctor again.".into());
+        let admin = if superuser { "" } else { " It needs a superuser: run it with such an account, or send it to your DBA." };
+        let enable = if !available {
+            None
+        } else if !preloaded && pending_restart {
+            steps.insert(0, "The setting is saved: restart PostgreSQL to load pg_stat_statements, then come back.".into());
+            None
+        } else if !preloaded {
+            // keep the libraries that are already preloaded
+            let mut libs: Vec<String> = text(&g[3]).split(',').map(|l| l.trim().to_owned()).filter(|l| !l.is_empty()).collect();
+            libs.push("pg_stat_statements".into());
+            Some(Enable {
+                label: "Enable".into(),
+                sql: format!("ALTER SYSTEM SET shared_preload_libraries = {};", lit(&libs.join(", "), false)),
+                note: format!("Saves the setting in postgresql.auto.conf; it takes effect after PostgreSQL restarts. Then come back here to create the extension.{admin}"),
+            })
+        } else {
+            Some(Enable {
+                label: "Enable".into(),
+                sql: "CREATE EXTENSION IF NOT EXISTS pg_stat_statements;".into(),
+                note: format!("Creates the extension in this database; statements are recorded from now on.{admin}"),
+            })
+        };
         return Ok(TableQueries {
-            unavailable: Some(Unavailable { title: "Query statistics are off: pg_stat_statements is not enabled".into(), steps }),
+            unavailable: Some(Unavailable { title: "Query statistics are off: pg_stat_statements is not enabled".into(), steps, enable }),
             queries: Vec::new(),
             suggestions: Vec::new(),
             hypopg,
+            hypopg_available,
             notes: Vec::new(),
         });
     }
@@ -437,7 +477,7 @@ async fn pg_queries(pool: &DbPool, schema: &str, table: &str) -> AppResult<Table
         }
     }
     let suggestions = suggestions(false, schema, table, reltuples, found, &existing, partitioned);
-    Ok(TableQueries { unavailable: None, queries, suggestions, hypopg, notes })
+    Ok(TableQueries { unavailable: None, queries, suggestions, hypopg, hypopg_available, notes })
 }
 
 /// JSON plan of a statement from pg_stat_statements: never executed (no ANALYZE).
@@ -598,11 +638,12 @@ fn uses_hypothetical(plan: &Value) -> bool {
 
 async fn my_queries(pool: &DbPool, schema: &str, table: &str) -> AppResult<TableQueries> {
     let DbPool::My(p) = pool else { unreachable!() };
-    let off = |title: &str, steps: Vec<String>| TableQueries {
-        unavailable: Some(Unavailable { title: title.into(), steps }),
+    let off = |title: &str, steps: Vec<String>, enable: Option<Enable>| TableQueries {
+        unavailable: Some(Unavailable { title: title.into(), steps, enable }),
         queries: Vec::new(),
         suggestions: Vec::new(),
         hypopg: false,
+        hypopg_available: false,
         notes: Vec::new(),
     };
     let ps_on = pool.text_rows("select @@performance_schema").await.ok().and_then(|r| r.first().map(|r| text(&r[0]) == "1")).unwrap_or(false);
@@ -613,6 +654,27 @@ async fn my_queries(pool: &DbPool, schema: &str, table: &str) -> AppResult<Table
                 "Set performance_schema = ON in the server configuration (my.cnf / my.ini) and restart MySQL.".into(),
                 "Use the application for a while, then open Table Doctor again.".into(),
             ],
+            None,
+        ));
+    }
+    // digests are only collected with this consumer on
+    let digests = pool
+        .text_rows("select enabled from performance_schema.setup_consumers where name = 'statements_digest'")
+        .await
+        .ok()
+        .and_then(|r| r.first().map(|r| text(&r[0])));
+    if digests.as_deref() == Some("NO") {
+        return Ok(off(
+            "Query statistics are off: statement digests are not collected",
+            vec![
+                "Turn on the statements_digest consumer (below). It lasts until the server restarts; to keep it, add performance-schema-consumer-statements-digest = ON to my.cnf.".into(),
+                "Use the application for a while, then open Table Doctor again.".into(),
+            ],
+            Some(Enable {
+                label: "Enable".into(),
+                sql: "UPDATE performance_schema.setup_consumers SET ENABLED = 'YES' WHERE NAME = 'statements_digest';".into(),
+                note: "Starts collecting statement digests now; needs UPDATE on performance_schema.".into(),
+            }),
         ));
     }
     let (s, t) = (lit(schema, true), lit(table, true));
@@ -634,13 +696,20 @@ async fn my_queries(pool: &DbPool, schema: &str, table: &str) -> AppResult<Table
     {
         Ok(rows) => rows,
         Err(e) => {
+            // the grant names this account exactly as the server sees it
+            let me = pool.text_rows("select current_user()").await.ok().and_then(|r| r.first().map(|r| text(&r[0]))).unwrap_or_default();
+            let account = match me.rsplit_once('@') {
+                Some((u, h)) => format!("{}@{}", lit(u, true), lit(h, true)),
+                None => "'user'@'host'".into(),
+            };
             return Ok(off(
                 "Query statistics can't be read",
-                vec![
-                    format!("The server said: {e}"),
-                    "Grant the user read access: GRANT SELECT ON performance_schema.* TO 'user'@'host';".into(),
-                    "Make sure statement digests are collected: UPDATE performance_schema.setup_consumers SET ENABLED = 'YES' WHERE NAME = 'statements_digest';".into(),
-                ],
+                vec![format!("The server said: {e}"), "This account needs read access to performance_schema (below).".into()],
+                Some(Enable {
+                    label: "Grant access".into(),
+                    sql: format!("GRANT SELECT ON performance_schema.* TO {account};"),
+                    note: "Needs an account that may grant privileges (e.g. root). Run it there, or send it to your DBA.".into(),
+                }),
             ));
         }
     };
@@ -706,7 +775,7 @@ async fn my_queries(pool: &DbPool, schema: &str, table: &str) -> AppResult<Table
         }
     }
     let suggestions = suggestions(true, schema, table, rows_est, found, &existing, false);
-    Ok(TableQueries { unavailable: None, queries, suggestions, hypopg: false, notes })
+    Ok(TableQueries { unavailable: None, queries, suggestions, hypopg: false, hypopg_available: false, notes })
 }
 
 /// Index columns for full scans of the table in a MySQL JSON plan.
