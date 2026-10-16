@@ -720,7 +720,7 @@ export function DataGrid({ rs, connId, kind, tabId }: { rs: ResultSet; connId: s
           onClose={() => setFilterPop(null)}
         />
       )}
-      <div className="mx-3 mb-1.5 flex min-h-7 items-center gap-3 text-[12px] text-fg-2">
+      <div className={cx("mx-3 mb-1.5 flex min-h-7 items-center gap-3 text-[12px] text-fg-2", editable && !sort.length && !hasChanges && "hidden")}>
         {!editable && (
           <span className="flex cursor-help items-center gap-1.5 text-muted" title={target}>
             <Lock size={12} /> {target.startsWith("Loading") ? target : "Read-only"}
