@@ -1,7 +1,7 @@
 // Background imports, exports and maintenance SQL: progress dialog, Tasks rail button and completion toasts.
 import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { Circle, CircleAlert, CircleCheck, FileDown, FileUp, ListChecks, Minimize2, Square, TriangleAlert, Wrench, X } from "lucide-react";
+import { Circle, CircleAlert, CircleCheck, FileDown, FileUp, Info, ListChecks, Minimize2, Square, TriangleAlert, Wrench, X } from "lucide-react";
 import { isDone, isRunning, jobPercent, outcome, useImports, type ImportJob } from "../lib/importJobs";
 import { useUpdater } from "../lib/updater";
 import { fmtSecs, RunView } from "./importParts";
@@ -309,11 +309,13 @@ export function ImportToasts() {
           key={t.id}
           className={cx(
             "pointer-events-auto flex animate-[tip-in_160ms_ease-out] gap-3 rounded-xl border bg-raised p-3.5 shadow-2xl shadow-black/50",
-            t.tone === "error" ? "border-err/50" : t.tone === "warn" ? "border-warn/50" : "border-ok/40",
+            t.tone === "error" ? "border-err/50" : t.tone === "warn" ? "border-warn/50" : t.tone === "info" ? "border-accent/40" : "border-ok/40",
           )}
         >
           {t.tone === "error" ? (
             <CircleAlert size={20} className="mt-px shrink-0 text-err" />
+          ) : t.tone === "info" ? (
+            <Info size={20} className="mt-px shrink-0 text-accent" />
           ) : t.tone === "warn" ? (
             <TriangleAlert size={20} className="mt-px shrink-0 text-warn" />
           ) : (
@@ -322,6 +324,17 @@ export function ImportToasts() {
           <div className="min-w-0 flex-1">
             <div className="text-[13px] font-semibold text-fg">{t.title}</div>
             <div className="mt-0.5 line-clamp-3 text-[12px] leading-snug text-fg-2">{t.body}</div>
+            {t.action && (
+              <button
+                onClick={() => {
+                  t.action!.run();
+                  close(t.id);
+                }}
+                className="mt-1.5 text-[12px] font-medium text-accent hover:underline"
+              >
+                {t.action.label}
+              </button>
+            )}
             {t.jobId && (
               <button onClick={() => show(t.jobId!)} className="mt-1.5 text-[12px] font-medium text-accent hover:underline">
                 View details

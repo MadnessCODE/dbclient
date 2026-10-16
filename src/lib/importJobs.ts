@@ -30,10 +30,11 @@ export interface ImportJob {
 
 export interface Toast {
   id: string;
-  tone: "ok" | "warn" | "error";
+  tone: "ok" | "info" | "warn" | "error";
   title: string;
   body: string;
   jobId?: string;
+  action?: { label: string; run: () => void };
 }
 
 interface State {
@@ -184,10 +185,10 @@ export async function startScanJob(meta: { title: string; target: string; connId
 }
 
 /** Toast for work that isn't an import job; success hides itself, errors stay. */
-export function pushToast(tone: Toast["tone"], title: string, body: string) {
-  const toast: Toast = { id: crypto.randomUUID(), tone, title, body };
+export function pushToast(tone: Toast["tone"], title: string, body: string, action?: Toast["action"]) {
+  const toast: Toast = { id: crypto.randomUUID(), tone, title, body, action };
   useImports.setState((st) => ({ toasts: [...st.toasts, toast] }));
-  if (tone === "ok") setTimeout(() => useImports.getState().closeToast(toast.id), 7000);
+  if (tone === "ok" || tone === "info") setTimeout(() => useImports.getState().closeToast(toast.id), tone === "info" ? 12000 : 7000);
   if (!document.hasFocus()) void osNotify(title, body);
 }
 

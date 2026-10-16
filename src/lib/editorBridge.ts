@@ -29,3 +29,14 @@ export function insertIntoEditor(tabId: string, text: string): boolean {
   editor.focus();
   return true;
 }
+
+/** Replaces the whole editor text as one undoable edit; false if no editor shows `tabId`. */
+export function setEditorText(tabId: string, text: string): boolean {
+  if (!current || current.tabId() !== tabId) return false;
+  const model = current.editor.getModel();
+  if (!model) return false;
+  current.editor.pushUndoStop();
+  current.editor.executeEdits("filters", [{ range: model.getFullModelRange(), text }]);
+  current.editor.pushUndoStop();
+  return true;
+}

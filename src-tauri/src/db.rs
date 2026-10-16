@@ -10,9 +10,9 @@ use std::time::{Duration, Instant};
 
 use futures_util::TryStreamExt;
 use serde::{Deserialize, Serialize};
-use sqlx::mysql::{MySqlConnectOptions, MySqlPool, MySqlPoolOptions, MySqlRow, MySqlSslMode};
-use sqlx::postgres::{PgConnectOptions, PgPool, PgPoolOptions, PgRow, PgSslMode, PgValueFormat};
-use sqlx::{AssertSqlSafe, Column, Either, Row, TypeInfo, ValueRef};
+use sqlx::mysql::{MySqlColumn, MySqlConnectOptions, MySqlPool, MySqlPoolOptions, MySqlRow, MySqlSslMode};
+use sqlx::postgres::{PgColumn, PgConnectOptions, PgPool, PgPoolOptions, PgRow, PgSslMode, PgValueFormat};
+use sqlx::{AssertSqlSafe, Column, Either, Executor, Row, SqlSafeStr, Statement, TypeInfo, ValueRef};
 
 use crate::error::{msg, AppResult};
 use crate::store::{ConnectionConfig, DbKind, SslMode};
@@ -351,8 +351,15 @@ pub async fn run_query(
             let mut conn = p.acquire().await?;
             let pid: i32 = sqlx::query_scalar("select pg_backend_pid()").fetch_one(&mut *conn).await?;
             running.insert(query_id, pool.clone(), pid as i64);
-            let stream = sqlx::raw_sql(AssertSqlSafe(sql)).fetch_many(&mut *conn);
-            let out = collect_results(stream, max_rows, pg_cell, pg_columns).await;
+            let stream = sqlx::raw_sql(AssertSqlSafe(sql.clone())).fetch_many(&mut *conn);
+            let mut out = collect_results(stream, max_rows, pg_cell, pg_columns).await;
+            if let Ok((sets, _)) = &mut out
+                && let Some(set) = empty_select(sets, &sql)
+                && let Ok(d) = (&mut *conn).prepare(AssertSqlSafe(sql.clone()).into_sql_str()).await
+            {
+                set.columns = pg_cols(d.columns());
+                set.returns_rows = !set.columns.is_empty();
+            }
             if matches!(out, Ok((_, true))) {
                 // Stopped reading mid-result: cancel on the server and drop the connection
                 // instead of returning it to the pool.
@@ -365,8 +372,15 @@ pub async fn run_query(
             let mut conn = mysql_conn(p, database).await?;
             let cid: u64 = sqlx::query_scalar("select connection_id()").fetch_one(&mut *conn).await?;
             running.insert(query_id, pool.clone(), cid as i64);
-            let stream = sqlx::raw_sql(AssertSqlSafe(sql)).fetch_many(&mut *conn);
-            let out = collect_results(stream, max_rows, my_cell, my_columns).await;
+            let stream = sqlx::raw_sql(AssertSqlSafe(sql.clone())).fetch_many(&mut *conn);
+            let mut out = collect_results(stream, max_rows, my_cell, my_columns).await;
+            if let Ok((sets, _)) = &mut out
+                && let Some(set) = empty_select(sets, &sql)
+                && let Ok(d) = (&mut *conn).prepare(AssertSqlSafe(sql.clone()).into_sql_str()).await
+            {
+                set.columns = my_cols(d.columns());
+                set.returns_rows = !set.columns.is_empty();
+            }
             if matches!(out, Ok((_, true))) {
                 let _ = cancel_backend(pool, cid as i64).await;
                 drop(conn.detach());
@@ -385,9 +399,26 @@ pub async fn run_query(
     Ok(QueryOutput { result_sets, elapsed_ms })
 }
 
+/// The only result of a single SELECT that returned no rows (the stream carries no columns then).
+fn empty_select<'a>(sets: &'a mut [ResultSet], sql: &str) -> Option<&'a mut ResultSet> {
+    let text = sql.trim().trim_end_matches(';').trim_start_matches('(').trim_start();
+    let head = text.split(|c: char| !c.is_ascii_alphabetic()).next().unwrap_or("").to_ascii_lowercase();
+    // a ';' anywhere may be a second statement: skip rather than guess
+    if !matches!(head.as_str(), "select" | "with" | "table" | "values") || text.contains(';') {
+        return None;
+    }
+    match sets {
+        [set] if !set.returns_rows && set.rows_affected == 0 => Some(set),
+        _ => None,
+    }
+}
+
 fn pg_columns(row: &PgRow) -> Vec<ColumnMeta> {
-    row.columns()
-        .iter()
+    pg_cols(row.columns())
+}
+
+fn pg_cols(cols: &[PgColumn]) -> Vec<ColumnMeta> {
+    cols.iter()
         .map(|c| ColumnMeta {
             name: c.name().to_string(),
             type_name: friendly_type(c.type_info().name()),
@@ -403,8 +434,11 @@ fn pg_columns(row: &PgRow) -> Vec<ColumnMeta> {
 }
 
 fn my_columns(row: &MySqlRow) -> Vec<ColumnMeta> {
-    row.columns()
-        .iter()
+    my_cols(row.columns())
+}
+
+fn my_cols(cols: &[MySqlColumn]) -> Vec<ColumnMeta> {
+    cols.iter()
         .map(|c| {
             let origin = c.origin().table_column().and_then(|tc| {
                 let (schema, table) = tc.table.split_once('.')?;

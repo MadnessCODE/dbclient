@@ -19,6 +19,8 @@ import {
 } from "./lib/api";
 import { baseId, dbOf, isMultiDb } from "./lib/connIds";
 import type { SortKey } from "./lib/export";
+import { filterLabel, filtersActive, sameSql, viewQuery, type GridFilters } from "./lib/filter";
+import { pushToast } from "./lib/importJobs";
 
 export type ConnStatus = "idle" | "connecting" | "connected" | "error";
 
@@ -84,6 +86,11 @@ export interface ServerSort {
   keys: SortKey[];
 }
 
+export interface GridView {
+  serverSort?: ServerSort;
+  filters?: GridFilters;
+}
+
 export interface TabRuntime {
   running: boolean;
   queryId?: string;
@@ -99,6 +106,8 @@ export interface TabRuntime {
   lastSql?: string;
   /** lastSql is `base` re-run with ORDER BY from a grid header sort */
   serverSort?: ServerSort;
+  /** lastSql is `filters.base` re-run with the grid filters */
+  filters?: GridFilters;
   /** A long query finished while the tab was inactive */
   unseen?: "ok" | "error";
 }
@@ -326,7 +335,8 @@ interface State {
   closeTab: (id: string) => void;
   setActiveTab: (id: string) => void;
   updateTab: (id: string, patch: Partial<EditorTab>) => void;
-  runTab: (id: string, sql?: string, serverSort?: ServerSort) => Promise<void>;
+  /** `view` marks a re-run from the grid (sort / filters); without it filters on another query are dropped */
+  runTab: (id: string, sql?: string, view?: GridView) => Promise<void>;
   cancelTab: (id: string) => Promise<void>;
   explainTab: (id: string, sql: string) => Promise<void>;
   patchRuntime: (id: string, patch: Partial<TabRuntime>) => void;
@@ -603,10 +613,10 @@ export const useStore = create<State>()(
         patchRuntime: (id, patch) =>
           set((s) => ({ runtime: { ...s.runtime, [id]: { ...(s.runtime[id] ?? emptyRuntime()), ...patch } } })),
 
-        runTab: async (tabId, sqlArg, serverSort) => {
+        runTab: async (tabId, sqlArg, view) => {
           const tab = get().tabs.find((t) => t.id === tabId);
           if (!tab) return;
-          const sql = (sqlArg ?? tab.sql).trim();
+          let sql = (sqlArg ?? tab.sql).trim();
           if (!sql) return;
           if (!tab.connId) {
             addMessage(tabId, "error", "Select a connection for this tab first.");
@@ -644,8 +654,22 @@ export const useStore = create<State>()(
             }
           }
 
+          // filters stay for a re-run of their query; another query drops them (with a way back)
+          const prevRt = runtimeOf(tabId);
+          let filters = view?.filters;
+          let dropped: GridFilters | undefined;
+          if (!view && filtersActive(prevRt.filters)) {
+            const kind = cfg?.kind ?? "postgres";
+            const cols = prevRt.output?.resultSets[prevRt.activeSet]?.columns.map((c) => c.name) ?? [];
+            const again = sameSql(prevRt.filters.base, sql) ? viewQuery(sql, kind, { ...prevRt.filters, base: sql }, [], cols) : null;
+            if (again) {
+              filters = { ...prevRt.filters, base: sql };
+              sql = again;
+            } else dropped = prevRt.filters;
+          }
+
           const queryId = uid();
-          get().patchRuntime(tabId, { running: true, queryId, startedAt: Date.now(), error: undefined, lastSql: sql, serverSort });
+          get().patchRuntime(tabId, { running: true, queryId, startedAt: Date.now(), error: undefined, lastSql: sql, serverSort: view?.serverSort, filters });
           const historyItem: HistoryItem = { id: queryId, tabId, sql, connId, title: tab.title, at: Date.now(), ok: false };
           try {
             const output = await api.runQuery(connId, queryId, sql, get().settings.maxRows, tabDatabase(tab));
@@ -680,10 +704,24 @@ export const useStore = create<State>()(
                 .map((rs) => (rs.returnsRows ? `${rs.rows.length.toLocaleString()} rows${rs.truncated ? "+" : ""}` : `${rs.rowsAffected.toLocaleString()} affected`))
                 .join(" · ") || "done";
             if (DDL.test(sql)) void get().refreshSchema(connId);
+            if (dropped && lastRows >= 0) {
+              const base = sql;
+              const restored = { ...dropped, base };
+              const cols = sets[lastRows].columns.map((c) => c.name);
+              const restoreSql = viewQuery(base, cfg?.kind ?? "postgres", restored, [], cols);
+              if (restoreSql) {
+                const shown = dropped.items.map(filterLabel).concat(dropped.where.trim() ? [dropped.where.trim()] : []);
+                pushToast("info", "Grid filters cleared", `A new query ran without: ${shown.slice(0, 3).join(", ")}${shown.length > 3 ? "…" : ""}`, {
+                  label: "Restore filters",
+                  run: () => void get().runTab(tabId, restoreSql, { filters: restored }),
+                });
+              }
+            }
           } catch (e) {
             const error = errorText(e);
             historyItem.summary = error;
-            get().patchRuntime(tabId, { running: false, error, resultTab: "messages" });
+            // a failed grid filter / sort keeps the grid so the filter can be fixed
+            get().patchRuntime(tabId, { running: false, error, resultTab: view && runtimeOf(tabId).output ? runtimeOf(tabId).resultTab : "messages" });
             addMessage(tabId, "error", error);
           }
           set((s) => ({ history: [historyItem, ...s.history].slice(0, HISTORY_LIMIT) }));
